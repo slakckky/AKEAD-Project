@@ -93,6 +93,33 @@ Proje su asamalardan gecti:
    **tek ve ana arayuzu** bu. `requirements.txt`'ten `streamlit`
    kaldirildi.
 
+7. **GitHub'a push (private repo, arkadasla ortak gelistirme icin).**
+   Hassas dosyalar (`.env`, `backup_vor_codex.sql`, gercek musteri
+   faturasi, raporlar) push'tan once tek tek kontrol edilip disarida
+   birakildi. Repo: `https://github.com/slakckky/AKEAD-Project`.
+
+8. **app.py temizligi.** Birlikte gelistirmeye baslamadan once GUI'deki
+   sorunlar giderildi:
+   - `os.startfile(...)` (sadece Windows'ta var) yerine platforma gore
+     `open`/`xdg-open`/`os.startfile` secen `_open_path()` eklendi -
+     artik macOS/Linux'ta da klasor/dosya acma butonlari calisiyor.
+   - "Auto-Import starten" butonu kaldirildi - `auto_import_all.py`'nin
+     invoice/orders/preisanfrage rotalari kod icinde kalici olarak
+     kapali (`False`) oldugu icin bu buton hicbir zaman gercek bir is
+     yapmiyordu, sadece kafa karistiriyordu.
+   - Tum buton/dialog metinleri Turkce'ye cevrildi. **Istisna:**
+     `_looks_like_dry_run()` / `_output_blocks_import()` icindeki
+     Almanca anahtar kelimeler **bilerek cevrilmedi** - bunlar arka
+     plandaki script'lerin (hala Almanca yazilmis) gercek konsol
+     ciktisiyla eslesiyor, cevrilirse algilama bozulur.
+   - Yeni buton: "PDF -> JSON (onizle / AI'a hazirla)" - artik GUI'den
+     dogrudan `scan_invoice.py` calistirilabiliyor (daha once GUI sadece
+     `auto_pdf_import.py`'yi kullaniyordu, `scan_invoice.py` entegrasyonu
+     GUI'ye hic baglanmamisti).
+   - `fix_brajlovic_invoice.py` silindi - tek bir faturaya (Brajlovic,
+     `document_id=3`) ozel, hicbir yerden cagrilmayan bir kerelik yama
+     script'iydi.
+
 ## Mimari: guvenli, kademeli akis
 
 Hicbir script gercek AKEAD ana tablolarina (`orders`, `invoices`, `produits`,
@@ -112,6 +139,15 @@ Hicbir script gercek AKEAD ana tablolarina (`orders`, `invoices`, `produits`,
    Staging'deki kalemleri AKEAD `produits` tablosundaki urunlerle eslestirir
    (sirayla: tam referans kodu -> barkod -> bulanik isim eslesmesi). Sonucu
    `product_match_report.md/csv` olarak raporlar, yazma icin yine `JA` ister.
+   Raporda **barkodu eksik kalan** ve **manuel kontrol gereken** satirlar
+   ayri, gozden kacmayacak bolumlerde isaretlenir.
+3b. **AI destekli eslestirme** ([ai_product_match.py](ai_product_match.py)):
+   Yukaridaki adimin "manuel kontrol" / "vorschlag" olarak biraktigi
+   satirlari (orn. fatura kisaltmasi yuzunden - "Honig Sy" -> aslinda
+   "Honig Sirup") Claude'a (model: `claude-opus-4-8`) gonderip en olasi
+   AKEAD urununu bulmasini ister. Sadece rapor uretir (`ai_match_report.md/csv`);
+   `--apply` ile calistirilirsa bile sadece yuksek guvenli (>=85) oneriler,
+   yine tam `JA` onayiyla yazilir. AI hicbir zaman barkod uydurmaz.
 4. **Ana tablolara aktarim** ([import_to_invoices.py](import_to_invoices.py)):
    Sadece bu adim gercek `invoices`/`invoices_details` tablolarina yazar -
    ve sadece sistem alanlarinin (`sy_uk`, `no_doc`, `id_vendor` vb.) kurali
@@ -131,9 +167,10 @@ durur (no-op).
   camelot tabanli tablo cikarimi kullaniyor (ayni faturada 181 kalem).
 - Urun otomatik eslestirme bilincli olarak temkinli: sadece yuksek guvenli
   eslesmeler otomatik kabul edilir, gerisi "manuel kontrol" olarak isaretlenir.
-- Barkod yoklugu/coklugu durumlari icin AI destekli eslestirme henuz
-  eklenmedi - bu, `extracted/*.json` ciktisini girdi olarak kullanacak
-  sekilde planlaniyor (bkz. "AI analizi" altinda).
+- `ai_product_match.py` henuz gercek bir Claude API anahtariyla, gercek
+  MySQL verisiyle test edilmedi (bu ortamda ne API anahtari ne DB erisimi
+  var) - mantik birim testlerle (sahte veriyle) dogrulandi, ama uctan uca
+  gercek bir calistirma henuz yapilmadi.
 
 ## Kurulum
 
@@ -171,25 +208,49 @@ python scan_invoice.py pdf_eingang/ --output extracted/
 python app.py
 ```
 
-`pdf_eingang/` klasorune PDF kopyalama, staging'e aktarma, urun
-eslestirme, fatura import (onayla) ve raporlari acma gibi tum adimlari
-buton buton calistirir. Windows'ta `start_akead_importer.bat` ile de
-baslatilabilir.
+`pdf_eingang/` klasorune PDF kopyalama, PDF -> JSON onizleme, staging'e
+aktarma, urun eslestirme, fatura import (onayla) ve raporlari acma gibi
+tum adimlari buton buton calistirir. macOS/Linux/Windows'ta calisir.
+Windows'ta `start_akead_importer.bat` ile de baslatilabilir.
 
 ### Komut satiri (tek tek adimlar)
 
 ```bash
 python import_staging.py          # pdf_eingang/ icindeki ilk PDF'i staging'e alir (JA onayi ister)
 python professional_product_match.py  # staging kalemlerini produits ile eslestirir
+python ai_product_match.py        # cozulemeyen satirlar icin AI onerisi (rapor, --apply ile JA onayli yazma)
 python import_to_invoices.py      # SADECE guvenli alanlar icin, JA onayi ister
 ```
 
-## AI analizi (planlanan)
+## AI analizi
 
-`extracted/*.json` ciktisi, fatura PDF'inin temiz, yapilandirilmis bir
-onbellegidir (sayfa metni + tablolar + olasi barkod adaylari). Ileride
-eklenecek AI destekli eslestirme adimi PDF'i tekrar acmak yerine bu
-JSON dosyalarini okuyacak sekilde tasarlanacak.
+[ai_product_match.py](ai_product_match.py), `professional_product_match.py`'nin
+"manuel kontrol" / "vorschlag" olarak biraktigi satirlari Claude API'ye
+(`claude-opus-4-8`, structured output ile) gonderip en olasi AKEAD urununu
+bulmasini ister - ozellikle fatura metninde kisaltma/kesilme oldugunda
+(orn. "Honig Sy" -> "Honig Sirup") bulanik metin eslestirmeden daha iyi
+sonuc verir. Kurulum icin `.env`'e `ANTHROPIC_API_KEY` eklemeniz gerekir
+(bkz. `.env.example`). Asla otomatik yazmaz - sadece rapor uretir, `--apply`
+ile bile sadece yuksek guvenli (>=85) oneriler `JA` onayiyla yazilir.
+
+**Birimler:** AKEAD'de sadece `KOL` (koli/karton), `KG` (kilogram), `ST`
+(Stueck/tekil adet) kullanilir. `professional_product_match.py`'deki
+`normalize_unit()` faturadaki onlarca kisaltmayi (Karton/Kart/Kar/Kartoon,
+Bund/BD/BL/BT/CC, Paket/PK/PKG/Package, ML/L/LT, MT/PA/PT/RL/TB/WG vb.)
+bu uce indirger - karton/koli ASLA tek bir ST sayilmaz (icinde birden
+fazla adet olur, `produits.packet_qty` bunu tutar). `ai_product_match.py`
+her satirda bu kural-tabanli tahmini AI'ya da gosterip dogrulatir/gerekirse
+duzelttirir, ayrica mevcut urunle eslesmeyen satirlar icin urun
+turunu/kategorisini de oneri olarak verir. Tedarikci adi (`supplier_name`)
+da baglam olarak gonderilir - ayni tedarikci genelde ayni kisaltma
+aliskanligini kullanir.
+
+**Dogrulama:** AI'nin cevabi `validate_matches()` ile kontrol edilir -
+gonderilmeyen bir `product_id`/`family_code` uydurursa, gecersiz bir birim
+dönerse, ya da bir satir icin hic cevap vermezse, bu sessizce kabul
+edilmez - uyari olarak loglanir ve guvenli bir degere (yok/kural-tabanli
+tahmin) dusurulur. AI'nin "sadece verilen listeden sec" talimatina uymasi
+varsayilmaz, sunucu tarafinda da dogrulanir.
 
 ## MySQL
 
@@ -214,5 +275,5 @@ ikisi de hassas/buyuk oldugu icin `.gitignore`'da, repoya commit edilmez.
 
 - Fatura formati / tedarikci ozel kurallar netlestikce `import_staging.py`
   ve `professional_product_match.py` guncellenecek.
-- Bu repo henuz bir uzak (remote) git sunucusuna baglanmadi - eklenirse,
-  yukaridaki hassas dosya listesini tekrar gozden gecirin.
+- Repo `https://github.com/slakckky/AKEAD-Project` adresine (private) push
+  edildi - hassas dosya listesi push'tan once tek tek kontrol edildi.

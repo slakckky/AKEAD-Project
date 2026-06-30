@@ -264,28 +264,64 @@ def barcode_candidates(item: dict) -> list[str]:
 
 
 def normalize_unit(pdf_unit: str, units: set[str]) -> tuple[str, str]:
-    raw = (pdf_unit or "").strip().casefold()
+    # AKEAD'de kullanilan birimler: KOL (Koli/karton - birden fazla ST icerir),
+    # KG (kilogram), ST (Stueck/tekil adet). "Karton"/"Kolli" ASLA ST'ye
+    # normalize edilmemeli - bir koli icinde birden fazla ST/parca olur, bu
+    # yuzden koli/karton tek bir adet gibi sayilirsa icindeki parca sayisi
+    # kaybolur (bkz. build_product_row -> packet_qty).
+    raw = (pdf_unit or "").strip().casefold().rstrip(".")
     mapping = {
-        "pk": "St",
-        "paket": "St",
-        "karton": "St",
-        "ct": "St",
-        "st": "St",
-        "stk": "St",
-        "stuck": "St",
-        "stück": "St",
-        "kg": "Kg",
-        "g": "St",
-        "gr": "St",
+        # Tekil/paket bazli satilan urunler (hepsi ST - icinde baska parca yok).
+        # Gramaj (g/gr) ve hacim (ml/l/lt) urun adinda zaten yaziyor, ayrica
+        # birim olarak kullanilmaz - hepsi ST'ye duser:
+        "pk": "ST",
+        "pkg": "ST",
+        "package": "ST",
+        "paket": "ST",
+        "ct": "ST",
+        "st": "ST",
+        "stk": "ST",
+        "stuck": "ST",
+        "stück": "ST",
+        "g": "ST",
+        "gr": "ST",
+        "ml": "ST",
+        "l": "ST",
+        "lt": "ST",
+        "bd": "ST",   # Bund (demet)
+        "bl": "ST",   # Bündel/Blatt
+        "bt": "ST",   # Beutel/Bouteille
+        "cc": "ST",
+        "pa": "ST",   # Packung
+        "pt": "ST",
+        "rl": "ST",   # Rolle
+        "tb": "ST",   # Tube
+        "wg": "ST",
+        "mt": "ST",
+        "bund": "ST",
+        "bündel": "ST",
+        # Agirlik:
+        "kg": "KG",
+        # Koli/karton - icinde birden fazla ST var, ASLA tek bir ST sayilmaz:
+        "karton": "KOL",
+        "kartoon": "KOL",
+        "kart": "KOL",
+        "kar": "KOL",
+        "koli": "KOL",
+        "kolli": "KOL",
+        "colli": "KOL",
+        "ctn": "KOL",
     }
-    unit = mapping.get(raw, pdf_unit[:3] if pdf_unit else "St")
+    unit = mapping.get(raw, pdf_unit[:3].upper() if pdf_unit else "ST")
     if unit in units:
         note = "aus PDF normalisiert"
         if raw in {"g", "gr"}:
-            note = "g/Gr nicht als Haupteinheit genutzt, auf St normalisiert"
+            note = "g/Gr nicht als Haupteinheit genutzt, auf ST normalisiert"
+        elif unit == "KOL":
+            note = "Karton/Kolli als KOL (Koli) normalisiert, nicht als Einzelstueck (ST)"
         return unit, note
-    if "St" in units:
-        return "St", f"PDF-Einheit {pdf_unit!r} nicht erlaubt, Fallback St"
+    if "ST" in units:
+        return "ST", f"PDF-Einheit {pdf_unit!r} nicht erlaubt, Fallback ST"
     return "", f"PDF-Einheit {pdf_unit!r} nicht erlaubt, keine sichere Einheit"
 
 
@@ -418,6 +454,21 @@ def build_product_row(template: dict, item: dict, family: dict, unit: str, sy_uk
     now = datetime.now().replace(microsecond=0)
     today = now.date()
     name = (item["article_name"] or "")[:255]
+
+    # KOL (koli/karton) tek basina bir "adet" degil, icinde birden fazla ST
+    # (Stueck) iceren bir paket. Temel birim her zaman ST kalmali, KOL sadece
+    # paketleme birimi (packet_unit); icindeki adet sayisi packet_qty'de
+    # tutulur (faturadan "Inhalt" alani cikarilmissa oradan, yoksa 1).
+    if unit == "KOL":
+        base_unit = "ST"
+        packet_unit = "KOL"
+        inhalt = item.get("inhalt")
+        packet_qty = inhalt if inhalt and inhalt > 0 else Decimal("1")
+    else:
+        base_unit = unit
+        packet_unit = unit
+        packet_qty = Decimal("1")
+
     row = {key: value for key, value in template.items() if key != "id"}
     row.update(
         {
@@ -431,9 +482,9 @@ def build_product_row(template: dict, item: dict, family: dict, unit: str, sy_uk
             "cod_fam_prd_path": family["cod_fam_prd_path"],
             "cod_grp_prd_path_1": "",
             "cod_grp_prd_path_2": "",
-            "unite": unit,
-            "packet_unit": unit,
-            "packet_qty": Decimal("1"),
+            "unite": base_unit,
+            "packet_unit": packet_unit,
+            "packet_qty": packet_qty,
             "contenu": Decimal("0"),
             "unite_contenu": "",
             "id_taxclass": family.get("id_taxclass") or template.get("id_taxclass") or 0,
@@ -623,6 +674,7 @@ def report_row(evaluation: dict) -> dict:
         "article_group": evaluation["family"],
         "article_group_name": evaluation["family_name"],
         "barcode": evaluation["barcode"],
+        "barcode_missing": "evet" if not evaluation["barcode"] else "",
         "invoice_tax": evaluation["invoice_tax"],
         "product_tax": evaluation["product_tax"],
         "tax_difference": evaluation["tax_difference"],
@@ -642,6 +694,9 @@ def write_reports(plan: dict) -> None:
     counts = {}
     for row in rows:
         counts[row["action"]] = counts.get(row["action"], 0) + 1
+    missing_barcode_rows = [row for row in rows if row["barcode_missing"]]
+    manual_review_rows = [row for row in rows if row["action"] == "manuell pruefen"]
+
     lines = [
         "# Product Match Report",
         "",
@@ -653,6 +708,45 @@ def write_reports(plan: dict) -> None:
     ]
     for action in ["uebernehmen", "vorschlag", "neu anlegen", "manuell pruefen"]:
         lines.append(f"- {action}: {counts.get(action, 0)}")
+    lines.append(f"- **barkodu eksik (elle doldurulmali): {len(missing_barcode_rows)}**")
+    lines.append(f"- **manuel kontrol gerekli: {len(manual_review_rows)}**")
+
+    lines.extend(["", "## BARKODU EKSIK - ELLE DOLDURULMALI", ""])
+    if missing_barcode_rows:
+        lines.append(
+            "Bu satirlar icin ne MySQL'de (AKEAD) ne de faturada/internette "
+            "guvenilir bir barkod bulunamadi. Barkod alani bos kaldi, elle "
+            "doldurulmasi gerekiyor:"
+        )
+        lines.append("")
+        lines.append("| PDF ArtNr | PDF Artikel | Aksiyon | AKEAD Urun | Not |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for row in missing_barcode_rows:
+            akead = f"{row['akead_product_id']} {row['akead_article_name']}".strip()
+            lines.append(
+                f"| {row['pdf_article_no']} | {row['pdf_article_name']} | "
+                f"{row['action']} | {akead or '-'} | {row['note']} |"
+            )
+    else:
+        lines.append("Bu faturada barkodu eksik kalan satir yok.")
+
+    lines.extend(["", "## MANUEL KONTROL GEREKLI", ""])
+    if manual_review_rows:
+        lines.append(
+            "Sistem bu satirlari guvenli sekilde otomatik eslestiremedi/olusturamadi - "
+            "birinin elle bakmasi gerekiyor:"
+        )
+        lines.append("")
+        lines.append("| PDF ArtNr | PDF Artikel | AKEAD Urun | Not |")
+        lines.append("| --- | --- | --- | --- |")
+        for row in manual_review_rows:
+            akead = f"{row['akead_product_id']} {row['akead_article_name']}".strip()
+            lines.append(
+                f"| {row['pdf_article_no']} | {row['pdf_article_name']} | {akead or '-'} | {row['note']} |"
+            )
+    else:
+        lines.append("Bu faturada manuel kontrol gerektiren satir yok.")
+
     lines.extend(
         [
             "",
@@ -688,10 +782,33 @@ def print_dry_run(plan: dict) -> None:
     print(f"Staging-Dokument: {plan['document_id']}")
     print(f"Positionen: {len(plan['evaluations'])}")
     print()
+
+    rows = [report_row(evaluation) for evaluation in plan["evaluations"]]
+    missing_barcode_rows = [row for row in rows if row["barcode_missing"]]
+    manual_review_rows = [row for row in rows if row["action"] == "manuell pruefen"]
+
+    print(f">>> BARKODU EKSIK (elle doldurulmali): {len(missing_barcode_rows)} satir <<<")
+    for row in missing_barcode_rows:
+        akead = f"{row['akead_product_id']} {row['akead_article_name']}".strip()
+        print(f"  - {row['pdf_article_no']} | {row['pdf_article_name']} | aksiyon: {row['action']} | AKEAD: {akead or '-'}")
+    print()
+
+    print(f">>> MANUEL KONTROL GEREKLI: {len(manual_review_rows)} satir <<<")
+    for row in manual_review_rows:
+        akead = f"{row['akead_product_id']} {row['akead_article_name']}".strip()
+        print(f"  - {row['pdf_article_no']} | {row['pdf_article_name']} | AKEAD: {akead or '-'} | not: {row['note'] or '-'}")
+    print()
+
+    print("--- Tum satirlarin detayi ---")
     for evaluation in plan["evaluations"]:
         row = report_row(evaluation)
+        marker = ""
+        if row["action"] == "manuell pruefen":
+            marker = ">>> MANUEL KONTROL GEREKLI <<< "
+        elif row["barcode_missing"]:
+            marker = ">>> BARKOD EKSIK <<< "
         print(
-            f"{row['pdf_article_no']} | {row['pdf_article_name']} | "
+            f"{marker}{row['pdf_article_no']} | {row['pdf_article_name']} | "
             f"Match {row['match_percent']}% | Aktion: {row['action']} | "
             f"Einheit: {row['unit'] or '-'} | Gruppe: {row['article_group'] or '-'} | "
             f"Barcode: {'ja' if row['barcode'] else 'nein'} | "
