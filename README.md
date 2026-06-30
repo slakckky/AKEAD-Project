@@ -213,6 +213,13 @@ Yukle -> 2. Tara ve Onizle -> 3. Sisteme Kaydet -> 4. Urun Eslestirme ->
 5. Faturayi Tamamla -> Raporlar -> Klasorler). macOS/Linux/Windows'ta
 calisir. Windows'ta `start_akead_importer.bat` ile de baslatilabilir.
 
+`app.py`, yanlis bir Python ile acilirsa (orn. VS Code'un "Run" tusu
+`.venv` disinda bir yorumlayici kullanirsa) **kendini otomatik olarak
+projenin `.venv` Python'uyla yeniden baslatir** - bu yuzden hangi
+yontemle acarsaniz acin (Run tusu, terminal, IDE) elle Python secmeniz
+gerekmez. `.venv` hic kurulmamissa, ne yapilmasi gerektigini soyleyen
+acik bir hata penceresi gosterir.
+
 `auto_pdf_import.py` (3. Sisteme Kaydet adimi) basariyla isledigi PDF'leri
 `pdf_eingang/`'dan `pdf_importiert/`'e, hata alanlari `pdf_fehler/`'e
 otomatik tasir (DB commit basarili olduktan sonra) - boylece `pdf_eingang/`

@@ -333,23 +333,47 @@ class AkeadImporterApp(tk.Tk):
         messagebox.showwarning("Rapor yok", "Henuz bir import raporu bulunamadi.")
 
 
-def _check_environment() -> bool:
+def _relaunch_with_venv_if_needed() -> None:
     """app.py'nin kendisi pdfplumber kullanmiyor, ama alt script'leri
-    sys.executable ile (yani app.py'i acan Python ile) calistiriyor. app.py
-    yanlis bir Python ile acilirsa (orn. .venv aktif degilken VS Code'un
-    "Run" tusuyla), her buton ayri ayri "ModuleNotFoundError" ile patlar -
-    bunun yerine en basta, tek ve net bir mesajla yakalamak daha iyi."""
+    sys.executable ile (yani app.py'i acan Python ile) calistiriyor.
+    Kullanicidan VS Code'da dogru Python'u sececek elle adim beklemek
+    yerine, yanlis bir Python ile acildigi anlasilirsa app.py kendini
+    projenin .venv Python'uyla otomatik olarak yeniden baslatir - boylece
+    nasil acilirsa acilsin (Run tusu, terminal, cift tik) hep dogru
+    ortamda calisir."""
+    try:
+        import pdfplumber  # noqa: F401
+        return
+    except ImportError:
+        pass
+
+    venv_dir = BASE_DIR / ".venv" / "bin"
+    venv_python = venv_dir / "python3"
+    if not venv_python.exists():
+        venv_python = venv_dir / "python"
+    if venv_python.exists() and Path(sys.executable).resolve() != venv_python.resolve():
+        os.execv(str(venv_python), [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+    # .venv bulunamadi (orn. henuz kurulmadi) - _check_environment() asagida
+    # kullaniciya acik bir hata mesaji gosterecek.
+
+
+def _check_environment() -> bool:
+    """Yukarida otomatik yeniden baslatma denendi ama .venv hic yoksa ya da
+    icinde pdfplumber kurulu degilse, bunu en basta tek ve net bir mesajla
+    yakalamak - butonlar ayri ayri 'ModuleNotFoundError' ile patlamasin."""
     try:
         import pdfplumber  # noqa: F401
     except ImportError:
         root = tk.Tk()
         root.withdraw()
         messagebox.showerror(
-            "Yanlis Python ortami",
-            "Gerekli paketler (orn. pdfplumber) bu Python ortaminda kurulu degil.\n\n"
-            "VS Code'da sag alt kosedeki Python surumune tiklayip, listeden bu "
-            "projenin .venv klasorundeki Python'u (orn. '.venv/bin/python' "
-            "yolunu gosteren secenek) secin, sonra app.py'i tekrar calistirin.",
+            "Kurulum eksik",
+            "Gerekli paketler (orn. pdfplumber) bulunamadi ve .venv klasoru "
+            "ya yok ya da eksik kurulu.\n\n"
+            "Terminalde proje klasorunde sirayla calistirin:\n\n"
+            "python3 -m venv .venv\n"
+            "source .venv/bin/activate\n"
+            "pip install --prefer-binary -r requirements.txt",
         )
         root.destroy()
         return False
@@ -357,6 +381,7 @@ def _check_environment() -> bool:
 
 
 def main() -> None:
+    _relaunch_with_venv_if_needed()
     if not _check_environment():
         sys.exit(1)
     app = AkeadImporterApp()
