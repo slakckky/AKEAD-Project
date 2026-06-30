@@ -207,9 +207,10 @@ class AkeadImporterApp(tk.Tk):
                         self.after(0, lambda: messagebox.showerror(
                             "Yanlis Python ortami",
                             "Gerekli bir paket bulunamadi (ModuleNotFoundError).\n\n"
-                            "Bu uygulamayi VS Code'un \"Run\" tusuyla degil, proje "
-                            "klasorundeki AKEAD-Ac.command dosyasina cift tiklayarak "
-                            "acin - o, dogru Python ortamini (.venv) otomatik aktiflestirir.",
+                            "VS Code'da sag alt kosedeki Python surumune tiklayip, "
+                            "listeden bu projenin .venv klasorundeki Python'u "
+                            "(orn. '.venv/bin/python' yolunu gosteren secenek) "
+                            "secin, sonra app.py'i tekrar calistirin.",
                         ))
                     else:
                         self.after(0, lambda: messagebox.showerror("Script hatasi", f"{script_name}, {result.returncode} cikis koduyla sona erdi."))
@@ -346,9 +347,9 @@ def _check_environment() -> bool:
         messagebox.showerror(
             "Yanlis Python ortami",
             "Gerekli paketler (orn. pdfplumber) bu Python ortaminda kurulu degil.\n\n"
-            "Bu uygulamayi VS Code'un \"Run\" tusuyla degil, proje "
-            "klasorundeki AKEAD-Ac.command dosyasina cift tiklayarak acin - "
-            "o, dogru Python ortamini (.venv) otomatik aktiflestirir.",
+            "VS Code'da sag alt kosedeki Python surumune tiklayip, listeden bu "
+            "projenin .venv klasorundeki Python'u (orn. '.venv/bin/python' "
+            "yolunu gosteren secenek) secin, sonra app.py'i tekrar calistirin.",
         )
         root.destroy()
         return False
