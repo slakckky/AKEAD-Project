@@ -240,7 +240,11 @@ ile bile sadece yuksek guvenli (>=85) oneriler `JA` onayiyla yazilir.
 - ST -> Bund/BD/BL/BT/CC, Paket/PKG/Package, Stk, ML/L/LT, MT/PA/PT/RL/TB/WG
 
 Karton/koli (ve PK) ASLA tek bir ST sayilmaz (icinde birden fazla adet
-olur, `produits.packet_qty` bunu tutar). `ai_product_match.py`
+olur, `produits.packet_qty` bunu tutar). Kelimenin kendisi yetmez:
+`resolve_unit()`, ham birim metni "Paket"/ST gibi gorunse bile, faturadaki
+ayri bir "Inhalt" (icerik adedi) kolonu 1'den fazlaysa sonucu otomatik
+olarak KOL'e yukseltir - yani "1 Paket" + Inhalt=6 -> KOL, packet_qty=6.
+`ai_product_match.py`
 her satirda bu kural-tabanli tahmini AI'ya da gosterip dogrulatir/gerekirse
 duzelttirir, ayrica mevcut urunle eslesmeyen satirlar icin urun
 turunu/kategorisini de oneri olarak verir. Tedarikci adi (`supplier_name`)

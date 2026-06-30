@@ -325,6 +325,23 @@ def normalize_unit(pdf_unit: str, units: set[str]) -> tuple[str, str]:
     return "", f"PDF-Einheit {pdf_unit!r} nicht erlaubt, keine sichere Einheit"
 
 
+def resolve_unit(item: dict, units: set[str]) -> tuple[str, str]:
+    """normalize_unit() sadece ham birim metnine (orn. "Paket") bakar - ama
+    faturada ayri bir "Inhalt" kolonu (orn. icinde 6 adet oldugunu gosteren)
+    olabilir. "1 Paket" tek bir ST degil, icinde N adet barindiran bir kap
+    olabilir. Bu fonksiyon normalize_unit()'i cagirip, eger sonuc ST ama
+    Inhalt kolonu 1'den buyukse, KOL'e yukseltir (icindeki adet sayisi
+    packet_qty'de kaybolmasin diye)."""
+    unit, note = normalize_unit(item.get("unit") or "", units)
+    inhalt = item.get("inhalt")
+    if unit == "ST" and inhalt and inhalt > 1 and "KOL" in units:
+        return "KOL", (
+            f"'{item.get('unit') or ''}' icin Inhalt kolonu {inhalt} adet gosteriyor - "
+            "tek bir ST degil, KOL olarak normalisiert"
+        )
+    return unit, note
+
+
 def family_score(article_name: str, family: dict) -> int:
     name = normalize_text(article_name)
     family_text = normalize_text(f"{family.get('lib') or ''} {family.get('lib_path') or ''}")
@@ -590,7 +607,7 @@ def evaluate_item(item: dict, products: list[dict], families: list[dict], units:
         }
 
     if pdf_import_exact and is_pdf_import_product(pdf_import_exact):
-        unit, unit_note = normalize_unit(item.get("unit") or "", units)
+        unit, unit_note = resolve_unit(item, units)
         family, family_note, _family_match = derive_family(item, families)
         notes.extend([unit_note, family_note])
         invoice_tax, product_tax, tax_diff = tax_info(item, pdf_import_exact)
@@ -615,7 +632,7 @@ def evaluate_item(item: dict, products: list[dict], families: list[dict], units:
             "barcode_suggestions": "",
         }
 
-    unit, unit_note = normalize_unit(item.get("unit") or "", units)
+    unit, unit_note = resolve_unit(item, units)
     family, family_note, family_match = derive_family(item, families)
     internet = open_food_facts_lookup(item)
     notes.extend([unit_note, family_note, internet["note"]])

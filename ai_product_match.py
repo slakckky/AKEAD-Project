@@ -93,19 +93,28 @@ Birim dogrulamasi (HER satir icin yap, urun eslesse de eslesmese de):
   "PK" -> KOL. Bir karton/koli/PK TEK BIR ST DEGILDIR, icinde birden \
   fazla ST/adet barindirir. Sonuc ASLA "Kar"/"Kartoon"/"PK" gibi \
   normalize edilmemis bir metin olmamali - daima tam olarak "KOL" yaz.
-- Asagidakilerin hepsi -> ST (tekil satilan ambalajlar, icinde baska \
-  parca yok, kendileri tek bir satis birimidir): "Bund" (demet), BD, BL, \
-  BT, CC, PA, PT, RL (Rolle), TB (Tube), WG, MT, "Package"/"PKG", "Paket", \
-  "Stk".
+- Asagidakilerin hepsi -> ST, AMA SADECE icinde gercekten tek bir parca \
+  varsa: "Bund" (demet), BD, BL, BT, CC, PA, PT, RL (Rolle), TB (Tube), \
+  WG, MT, "Package"/"PKG", "Paket", "Stk".
+- ONEMLI: "1 Paket" gibi gorunse bile, faturada AYRI bir kolon (raw_inhalt) \
+  veya urun adinin icinde ("6'li paket", "6x90g" gibi) icindeki adedin \
+  1'den fazla oldugunu gosteren bir ipucu varsa, bu satir ST DEGIL KOL \
+  sayilmali - "Paket" kelimesi tek basina yeterli degil, asil belirleyici \
+  icinde kac ST oldugu. Boyle bir durumda unit="KOL" yaz ve \
+  pieces_per_kol'a o adedi yaz.
 - Hacim/uzunluk birimleri (ML, L, LT) bagimsiz bir birim DEGIL - urun \
-  zaten "500ml" gibi hacmi adinda tasir, bunlar da -> ST.
+  zaten "500ml" gibi hacmi adinda tasir, bunlar da -> ST (yine de yukaridaki \
+  "icinde birden fazla parca varsa KOL" kurali burada da gecerli).
 - "KG" sadece gercekten kiloyla satilan urunler icin (orn. acik/dokme \
   urunler).
 - unit alanina HER ZAMAN KOL/KG/ST'den birini yaz (asla bos birakma).
-- unit "KOL" ise, pieces_per_kol alanina bir kolide kac ST/adet oldugunu \
-  yaz (orn. urun adinda "24x90g" veya "12 Stk" gibi bir ipucu varsa veya \
-  raw_kolli/raw_inhalt alanlari doluysa onlardan cikar). Emin degilsen \
-  null birak - uydurma.
+- unit "KOL" ise, pieces_per_kol alanina bir kolide/pakette kac ST/adet \
+  oldugunu yaz (urun adindaki "24x90g"/"12 Stk"/"6'li" gibi ipuclarindan \
+  veya raw_kolli/raw_inhalt alanlarindan cikar). Emin degilsen null birak \
+  - uydurma.
+- rule_based_unit zaten Inhalt kolonunu kontrol edip gerekiyorsa KOL'e \
+  yukseltiyor - ama urun adindaki ipuclarini (Inhalt kolonu bos olsa bile) \
+  sadece sen gorebilirsin, bu yuzden hala dikkatli kontrol et.
 
 Urun turu (SADECE product_id null ise doldur - mevcut bir urunle eslestiyse \
 o urunun zaten kendi turu vardir):
@@ -177,7 +186,7 @@ def build_unresolved_payload(
             continue
         item = evaluation["item"]
         candidates = get_top_candidates(item, products)
-        rule_based_unit, rule_based_note = ppm.normalize_unit(item.get("unit") or "", allowed_units)
+        rule_based_unit, rule_based_note = ppm.resolve_unit(item, allowed_units)
         unresolved.append(
             {
                 "item_id": item["id"],
