@@ -922,6 +922,20 @@ def write_pdf_report(results: list[dict]) -> None:
         logging.warning("Import-Report konnte nicht geschrieben werden (%s): %s", PDF_REPORT, exc)
 
 
+def move_pdf(pdf_path: Path, target_dir: Path) -> None:
+    """Islenen PDF'i pdf_eingang'dan cikarip sonucuna gore pdf_importiert ya
+    da pdf_fehler'e tasir - boylece pdf_eingang sadece henuz islenmemis
+    PDF'leri icerir, ayni dosya tekrar tekrar islenmez."""
+    target = target_dir / pdf_path.name
+    if target.exists():
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target = target_dir / f"{pdf_path.stem}_{stamp}{pdf_path.suffix}"
+    try:
+        shutil.move(str(pdf_path), str(target))
+    except OSError as exc:
+        logging.warning("PDF tasinamadi (%s -> %s): %s", pdf_path, target, exc)
+
+
 def process_pdf(connection, pdf_path: Path) -> dict:
     logging.info("Starte Verarbeitung: %s", pdf_path.name)
     evaluated = [quality_for_candidate(pdf_path, candidate) for candidate in collect_text_candidates(pdf_path)]
@@ -1112,6 +1126,7 @@ def main() -> int:
             return preview_mode(config, pdfs)
 
         connection = connect_db(config)
+        processed: list[tuple[Path, bool]] = []
         try:
             execute_create_tables(connection)
             results = []
@@ -1119,6 +1134,7 @@ def main() -> int:
                 try:
                     result = process_pdf(connection, pdf_path)
                     results.append(result)
+                    processed.append((pdf_path, True))
                 except Exception as exc:
                     connection.rollback()
                     logging.exception("Fehler bei %s", pdf_path.name)
@@ -1132,6 +1148,7 @@ def main() -> int:
                             "error": str(exc),
                         }
                     )
+                    processed.append((pdf_path, False))
                     continue
             connection.commit()
         except Exception:
@@ -1139,6 +1156,12 @@ def main() -> int:
             raise
         finally:
             connection.close()
+
+        # Commit basariyla tamamlandi - simdi PDF'leri sonuclarina gore tasi:
+        # basarili olanlar pdf_importiert'e, hata alanlar pdf_fehler'e. Boylece
+        # pdf_eingang sadece henuz islenmemis PDF'leri icerir.
+        for pdf_path, success in processed:
+            move_pdf(pdf_path, PDF_IMPORTED_DIR if success else PDF_ERROR_DIR)
 
         write_errors(errors)
         write_pdf_report(results)

@@ -30,12 +30,15 @@ EXTRACTED_DIR = BASE_DIR / "extracted"
 REPORT_FILES = [
     BASE_DIR / "product_match_report.md",
     BASE_DIR / "product_match_report.csv",
+    BASE_DIR / "ai_match_report.md",
+    BASE_DIR / "ai_match_report.csv",
     BASE_DIR / "product_creation_mapping.md",
     BASE_DIR / "invoice_mapping.md",
     BASE_DIR / "preisanfrage_mapping.md",
     BASE_DIR / "import_plan.md",
 ]
 ERROR_REPORT = BASE_DIR / "import_errors.csv"
+AI_REPORT_MD = BASE_DIR / "ai_match_report.md"
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -44,8 +47,8 @@ class AkeadImporterApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("AKEAD Fatura Aktarici")
-        self.geometry("1120x760")
-        self.minsize(900, 600)
+        self.geometry("1200x880")
+        self.minsize(950, 650)
         self.running = False
 
         self._ensure_dirs()
@@ -61,30 +64,48 @@ class AkeadImporterApp(tk.Tk):
         root = ttk.Frame(self, padding=10)
         root.pack(fill=tk.BOTH, expand=True)
 
-        button_frame = ttk.Frame(root)
-        button_frame.pack(fill=tk.X)
-
-        buttons = [
-            ("PDF sec ve pdf_eingang'a kopyala", self.choose_pdf),
-            ("PDF -> JSON (onizle / AI'a hazirla)", lambda: self.run_script("scan_invoice.py", args=[str(PDF_INPUT_DIR)])),
-            ("PDF analiz et (on izleme)", lambda: self.run_script("auto_pdf_import.py", args=["--preview"])),
-            ("Staging'e aktar", lambda: self.run_script("auto_pdf_import.py")),
-            ("Eksik urunleri kontrol et/olustur", lambda: self.run_script("auto_product_match.py")),
-            ("Faturayi AKEAD'e aktar", lambda: self.run_dry_then_confirm("import_to_invoices.py", "Fatura gercekten AKEAD'e aktarilsin mi?")),
-            ("Import raporunu ac", self.open_import_report),
-            ("Hata raporunu ac", lambda: self.open_file(ERROR_REPORT)),
-            ("pdf_eingang klasorunu ac", lambda: self.open_folder(PDF_INPUT_DIR)),
-            ("pdf_importiert klasorunu ac", lambda: self.open_folder(PDF_IMPORTED_DIR)),
-            ("pdf_fehler klasorunu ac", lambda: self.open_folder(PDF_ERROR_DIR)),
-            ("extracted klasorunu ac (JSON ciktilari)", lambda: self.open_folder(EXTRACTED_DIR)),
+        # Butonlar gercek is akisina gore numarali bolumlere ayrildi - hangi
+        # adimda oldugunuz, sonraki adimin ne oldugu acik olsun diye.
+        sections = [
+            ("1. Fatura Yukle", [
+                ("PDF Sec ve Yukle", self.choose_pdf),
+            ]),
+            ("2. Tara ve Onizle", [
+                ("Faturayi Tara (PDF -> JSON)", lambda: self.run_script("scan_invoice.py", args=[str(PDF_INPUT_DIR)])),
+                ("Cikarilanlari Onizle (Kontrol Et)", lambda: self.run_script("auto_pdf_import.py", args=["--preview"])),
+            ]),
+            ("3. Sisteme Kaydet (Taslak)", [
+                ("Faturayi Sisteme Kaydet", lambda: self.run_script("auto_pdf_import.py")),
+            ]),
+            ("4. Urun Eslestirme", [
+                ("AKEAD Urunleriyle Eslestir", lambda: self.run_dry_then_confirm("professional_product_match.py", "Urun eslestirme/olusturma sonuclari AKEAD'e yazilsin mi?")),
+                ("AI'dan Oneri Al (Rapor)", lambda: self.run_script("ai_product_match.py")),
+                ("AI Onerilerini Onayla ve Kaydet", self.run_ai_apply),
+            ]),
+            ("5. Faturayi Tamamla", [
+                ("Faturayi AKEAD'e Aktar", lambda: self.run_dry_then_confirm("import_to_invoices.py", "Fatura gercekten AKEAD'e aktarilsin mi?")),
+            ]),
+            ("Raporlar", [
+                ("Eslestirme Raporunu Ac", self.open_import_report),
+                ("AI Raporunu Ac", lambda: self.open_file(AI_REPORT_MD)),
+                ("Hata Raporunu Ac", lambda: self.open_file(ERROR_REPORT)),
+            ]),
+            ("Klasorler (Gelismis)", [
+                ("pdf_eingang", lambda: self.open_folder(PDF_INPUT_DIR)),
+                ("pdf_importiert", lambda: self.open_folder(PDF_IMPORTED_DIR)),
+                ("pdf_fehler", lambda: self.open_folder(PDF_ERROR_DIR)),
+                ("extracted (JSON)", lambda: self.open_folder(EXTRACTED_DIR)),
+            ]),
         ]
 
-        for index, (label, command) in enumerate(buttons):
-            button = ttk.Button(button_frame, text=label, command=command)
-            button.grid(row=index // 3, column=index % 3, sticky="ew", padx=4, pady=4)
-
-        for column in range(3):
-            button_frame.columnconfigure(column, weight=1)
+        for title, items in sections:
+            frame = ttk.LabelFrame(root, text=title, padding=6)
+            frame.pack(fill=tk.X, pady=3)
+            for column, (label, command) in enumerate(items):
+                button = ttk.Button(frame, text=label, command=command)
+                button.grid(row=0, column=column, sticky="ew", padx=4, pady=2)
+            for column in range(len(items)):
+                frame.columnconfigure(column, weight=1)
 
         status_frame = ttk.Frame(root)
         status_frame.pack(fill=tk.X, pady=(10, 6))
@@ -92,7 +113,7 @@ class AkeadImporterApp(tk.Tk):
         ttk.Label(status_frame, textvariable=self.status_var).pack(side=tk.LEFT)
         ttk.Button(status_frame, text="Ciktiyi temizle", command=self.clear_output).pack(side=tk.RIGHT)
 
-        self.output = scrolledtext.ScrolledText(root, wrap=tk.WORD, height=28, font=("Consolas", 10))
+        self.output = scrolledtext.ScrolledText(root, wrap=tk.WORD, height=18, font=("Consolas", 10))
         self.output.pack(fill=tk.BOTH, expand=True)
 
     def log(self, text: str) -> None:
@@ -221,6 +242,22 @@ class AkeadImporterApp(tk.Tk):
                 self.run_script(script_name, input_text="JA\n")
 
         self.run_script(script_name, input_text="NEIN\n", after=after_dry_run)
+
+    def run_ai_apply(self) -> None:
+        # ai_product_match.py'nin dry-run/onay akisi diger script'lerden farkli:
+        # argumansiz calistirma zaten her zaman sadece rapor uretir (zararsiz),
+        # gercek yazma sadece --apply ile ve scriptin kendi JA sorusuyla olur.
+        # Bu yuzden burada run_dry_then_confirm yerine ayri, basit bir onay var.
+        if self.running:
+            messagebox.showwarning("AKEAD Fatura Aktarici", "Zaten bir script calisiyor.")
+            return
+        if not messagebox.askyesno(
+            "Onay",
+            "AI raporunu incelediginizden emin misiniz? Yuksek guvenli (>=85) "
+            "AI onerileri pdf_import_items.product_id'ye yazilacak. Devam edilsin mi?",
+        ):
+            return
+        self.run_script("ai_product_match.py", args=["--apply"], input_text="JA\n")
 
     def _looks_like_dry_run(self, output: str) -> bool:
         # Bu kelimeler backend script'lerinin (Almanca) ciktisindan geliyor -

@@ -208,10 +208,16 @@ python scan_invoice.py pdf_eingang/ --output extracted/
 python app.py
 ```
 
-`pdf_eingang/` klasorune PDF kopyalama, PDF -> JSON onizleme, staging'e
-aktarma, urun eslestirme, fatura import (onayla) ve raporlari acma gibi
-tum adimlari buton buton calistirir. macOS/Linux/Windows'ta calisir.
-Windows'ta `start_akead_importer.bat` ile de baslatilabilir.
+Butonlar gercek is akisina gore numarali bolumlere ayrilmis (1. Fatura
+Yukle -> 2. Tara ve Onizle -> 3. Sisteme Kaydet -> 4. Urun Eslestirme ->
+5. Faturayi Tamamla -> Raporlar -> Klasorler). macOS/Linux/Windows'ta
+calisir. Windows'ta `start_akead_importer.bat` ile de baslatilabilir.
+
+`auto_pdf_import.py` (3. Sisteme Kaydet adimi) basariyla isledigi PDF'leri
+`pdf_eingang/`'dan `pdf_importiert/`'e, hata alanlari `pdf_fehler/`'e
+otomatik tasir (DB commit basarili olduktan sonra) - boylece `pdf_eingang/`
+sadece henuz islenmemis PDF'leri icerir, ayni dosya tekrar tekrar islenmez.
+Ayni isimde dosya zaten varsa zaman damgasi eklenir, ustune yazilmaz.
 
 ### Komut satiri (tek tek adimlar)
 
