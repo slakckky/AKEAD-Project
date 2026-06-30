@@ -89,14 +89,14 @@ Birim dogrulamasi (HER satir icin yap, urun eslesse de eslesmese de):
   bir kural tablosuyla onceden tahmin edilmis birim (rule_based_unit) \
   veriliyor. rule_based_unit bazen yanlis olabilir (bilinmeyen bir \
   kisaltma, vs.) - dikkatlice kontrol et ve gerekirse DUZELT.
-- "Karton"/"Kart"/"Kar"/"Kartoon" (yazim hatalari dahil) / "Kolli"/"Koli" \
-  -> KOL. Bir karton/koli TEK BIR ST DEGILDIR, icinde birden fazla \
-  ST/adet barindirir. Sonuc ASLA "Kar" ya da "Kartoon" gibi normalize \
-  edilmemis bir metin olmamali - daima tam olarak "KOL" yaz.
+- "Karton"/"Kart"/"Kar"/"Kartoon" (yazim hatalari dahil) / "Kolli"/"Koli" / \
+  "PK" -> KOL. Bir karton/koli/PK TEK BIR ST DEGILDIR, icinde birden \
+  fazla ST/adet barindirir. Sonuc ASLA "Kar"/"Kartoon"/"PK" gibi \
+  normalize edilmemis bir metin olmamali - daima tam olarak "KOL" yaz.
 - Asagidakilerin hepsi -> ST (tekil satilan ambalajlar, icinde baska \
   parca yok, kendileri tek bir satis birimidir): "Bund" (demet), BD, BL, \
-  BT, CC, PA, PT, RL (Rolle), TB (Tube), WG, MT, "Package"/"PKG", \
-  "Paket", "Stk", "PK".
+  BT, CC, PA, PT, RL (Rolle), TB (Tube), WG, MT, "Package"/"PKG", "Paket", \
+  "Stk".
 - Hacim/uzunluk birimleri (ML, L, LT) bagimsiz bir birim DEGIL - urun \
   zaten "500ml" gibi hacmi adinda tasir, bunlar da -> ST.
 - "KG" sadece gercekten kiloyla satilan urunler icin (orn. acik/dokme \

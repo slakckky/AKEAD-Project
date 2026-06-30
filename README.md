@@ -235,10 +235,12 @@ ile bile sadece yuksek guvenli (>=85) oneriler `JA` onayiyla yazilir.
 
 **Birimler:** AKEAD'de sadece `KOL` (koli/karton), `KG` (kilogram), `ST`
 (Stueck/tekil adet) kullanilir. `professional_product_match.py`'deki
-`normalize_unit()` faturadaki onlarca kisaltmayi (Karton/Kart/Kar/Kartoon,
-Bund/BD/BL/BT/CC, Paket/PK/PKG/Package, ML/L/LT, MT/PA/PT/RL/TB/WG vb.)
-bu uce indirger - karton/koli ASLA tek bir ST sayilmaz (icinde birden
-fazla adet olur, `produits.packet_qty` bunu tutar). `ai_product_match.py`
+`normalize_unit()` faturadaki onlarca kisaltmayi bu uce indirger:
+- KOL -> Karton/Kart/Kar/Kartoon, Kolli/Koli/Colli/Ctn, **PK**
+- ST -> Bund/BD/BL/BT/CC, Paket/PKG/Package, Stk, ML/L/LT, MT/PA/PT/RL/TB/WG
+
+Karton/koli (ve PK) ASLA tek bir ST sayilmaz (icinde birden fazla adet
+olur, `produits.packet_qty` bunu tutar). `ai_product_match.py`
 her satirda bu kural-tabanli tahmini AI'ya da gosterip dogrulatir/gerekirse
 duzelttirir, ayrica mevcut urunle eslesmeyen satirlar icin urun
 turunu/kategorisini de oneri olarak verir. Tedarikci adi (`supplier_name`)

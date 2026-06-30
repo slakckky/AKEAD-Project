@@ -274,7 +274,6 @@ def normalize_unit(pdf_unit: str, units: set[str]) -> tuple[str, str]:
         # Tekil/paket bazli satilan urunler (hepsi ST - icinde baska parca yok).
         # Gramaj (g/gr) ve hacim (ml/l/lt) urun adinda zaten yaziyor, ayrica
         # birim olarak kullanilmaz - hepsi ST'ye duser:
-        "pk": "ST",
         "pkg": "ST",
         "package": "ST",
         "paket": "ST",
@@ -311,6 +310,7 @@ def normalize_unit(pdf_unit: str, units: set[str]) -> tuple[str, str]:
         "kolli": "KOL",
         "colli": "KOL",
         "ctn": "KOL",
+        "pk": "KOL",
     }
     unit = mapping.get(raw, pdf_unit[:3].upper() if pdf_unit else "ST")
     if unit in units:
