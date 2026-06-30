@@ -3,6 +3,20 @@ node_modules/
 __pycache__/
 *.pyc
 .env
+*.env
 .venv/
 dist/
 build/
+extracted/
+
+# Hassas / gercek musteri verisi iceren dosyalar - asla commit etme:
+backup_vor_codex.sql
+pdf_eingang/
+pdf_importiert/
+pdf_fehler/
+debug_text.txt
+debug_bursam_text.txt
+debug_*.txt
+*.log
+*.csv
+preview_summary.txt

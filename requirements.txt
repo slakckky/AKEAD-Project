@@ -1,0 +1,13 @@
+pdfplumber>=0.11
+pdf2image>=1.17
+pytesseract>=0.3.13
+Pillow>=10.0
+SQLAlchemy>=2.0
+PyMySQL>=1.1
+python-dotenv>=1.0
+
+# Asagidakiler opsiyonel - kurulu degilse ilgili script otomatik olarak
+# daha basit bir yonteme duser (rapidfuzz -> difflib, camelot -> pdfplumber):
+# camelot-py[cv]>=0.11   # auto_pdf_import.py tablo cikarimi icin
+# PyMuPDF>=1.24          # auto_pdf_import.py (fitz) icin
+# rapidfuzz>=3.9         # urun adi eslestirmede daha hizli/iyi bulanik eslestirme icin
