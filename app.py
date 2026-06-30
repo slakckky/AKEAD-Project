@@ -203,7 +203,16 @@ class AkeadImporterApp(tk.Tk):
                 self.after(0, lambda: self.log(output))
                 self.after(0, lambda: self.log_line(f"Cikis kodu: {result.returncode}"))
                 if result.returncode != 0:
-                    self.after(0, lambda: messagebox.showerror("Script hatasi", f"{script_name}, {result.returncode} cikis koduyla sona erdi."))
+                    if "ModuleNotFoundError" in output:
+                        self.after(0, lambda: messagebox.showerror(
+                            "Yanlis Python ortami",
+                            "Gerekli bir paket bulunamadi (ModuleNotFoundError).\n\n"
+                            "Bu uygulamayi VS Code'un \"Run\" tusuyla degil, proje "
+                            "klasorundeki AKEAD-Ac.command dosyasina cift tiklayarak "
+                            "acin - o, dogru Python ortamini (.venv) otomatik aktiflestirir.",
+                        ))
+                    else:
+                        self.after(0, lambda: messagebox.showerror("Script hatasi", f"{script_name}, {result.returncode} cikis koduyla sona erdi."))
                 if after:
                     self.after(0, lambda: after(result.returncode, output))
             except Exception as exc:
@@ -323,7 +332,32 @@ class AkeadImporterApp(tk.Tk):
         messagebox.showwarning("Rapor yok", "Henuz bir import raporu bulunamadi.")
 
 
+def _check_environment() -> bool:
+    """app.py'nin kendisi pdfplumber kullanmiyor, ama alt script'leri
+    sys.executable ile (yani app.py'i acan Python ile) calistiriyor. app.py
+    yanlis bir Python ile acilirsa (orn. .venv aktif degilken VS Code'un
+    "Run" tusuyla), her buton ayri ayri "ModuleNotFoundError" ile patlar -
+    bunun yerine en basta, tek ve net bir mesajla yakalamak daha iyi."""
+    try:
+        import pdfplumber  # noqa: F401
+    except ImportError:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "Yanlis Python ortami",
+            "Gerekli paketler (orn. pdfplumber) bu Python ortaminda kurulu degil.\n\n"
+            "Bu uygulamayi VS Code'un \"Run\" tusuyla degil, proje "
+            "klasorundeki AKEAD-Ac.command dosyasina cift tiklayarak acin - "
+            "o, dogru Python ortamini (.venv) otomatik aktiflestirir.",
+        )
+        root.destroy()
+        return False
+    return True
+
+
 def main() -> None:
+    if not _check_environment():
+        sys.exit(1)
     app = AkeadImporterApp()
     app.mainloop()
 
