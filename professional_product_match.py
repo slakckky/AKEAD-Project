@@ -429,6 +429,37 @@ def open_food_facts_lookup(item: dict) -> dict:
     return {"barcode": "", "note": "kein sehr sicherer Open-Food-Facts-Treffer", "suggestions": ""}
 
 
+def open_food_facts_by_barcode(barcode: str) -> dict:
+    """Query Open Food Facts by exact barcode; return product names for fuzzy matching."""
+    global OPEN_FOOD_FACTS_AVAILABLE
+    if not OPEN_FOOD_FACTS_AVAILABLE:
+        return {"names": [], "note": "Open Food Facts skipped after previous error"}
+
+    url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "akead-pdf-import/1.0"})
+        with urllib.request.urlopen(req, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        OPEN_FOOD_FACTS_AVAILABLE = False
+        return {"names": [], "note": f"Open Food Facts not reachable: {exc}"}
+
+    if payload.get("status") != 1:
+        return {"names": [], "note": f"Barcode {barcode} not in Open Food Facts"}
+
+    p = payload.get("product") or {}
+    names: list[str] = []
+    for field in ("product_name_de", "product_name_en", "product_name"):
+        val = str(p.get(field) or "").strip()
+        if val and val not in names:
+            names.append(val)
+    brands = str(p.get("brands") or "").strip()
+    quantity = str(p.get("quantity") or "").strip()
+    label = f"{brands} {names[0]} {quantity}".strip() if names else barcode
+    return {"names": names, "brands": brands, "quantity": quantity,
+            "note": f"OFF barcode hit: {label}"}
+
+
 def best_barcode_match(item: dict, products: list[dict]) -> dict | None:
     candidates = set(barcode_candidates(item))
     if not candidates:
@@ -554,6 +585,22 @@ def evaluate_item(item: dict, products: list[dict], families: list[dict], units:
         product = best_barcode_match(item, products)
         match_type = "barcode" if product else ""
         score = 100 if product else 0
+
+    # barcode in invoice but not in AKEAD codebarres → ask Open Food Facts
+    # for the product name, then try fuzzy-matching that name against AKEAD
+    if not product:
+        for bc in barcode_candidates(item):
+            off = open_food_facts_by_barcode(bc)
+            for name in off.get("names", []):
+                fp, fs = best_fuzzy_match(dict(item, article_name=name), products)
+                if fp and fs >= AUTO_MATCH_THRESHOLD:
+                    product = fp
+                    match_type = "OFF barcode→fuzzy"
+                    score = fs
+                    notes.append(f"OFF: {bc} → {name}")
+                    break
+            if product:
+                break
 
     if not product:
         fuzzy_product, fuzzy_score = best_fuzzy_match(item, products)
