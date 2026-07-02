@@ -512,7 +512,8 @@ def item_from_cells(header: list[str], row: list[str]) -> dict | None:
     idx_unit = column_index(header, ["einheit", "einh", "unit"])
     idx_stk_kg = column_index(header, ["stk/kg", "stk kg", "vpe", "stk", "kg"])
     idx_price = column_index(header, ["preis", "stpreis", "ep"], exclude_if=["letzte", "g."])
-    idx_tax = column_index(header, ["mwst", "kz", "tax", "ust"])
+    # "kz" (Kennzeichen) is a tax-category code, not a percentage — excluded
+    idx_tax = column_index(header, ["mwst", "tax", "ust"])
     idx_total = column_index(header, ["betrag", "gesamt", "summe", "gpreis", "g. preis", "g preis"])
     if idx_qty is None or idx_total is None:
         return None

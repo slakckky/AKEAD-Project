@@ -530,7 +530,8 @@ def build_product_row(template: dict, item: dict, family: dict, unit: str, sy_uk
     row = {key: value for key, value in template.items() if key != "id"}
     row.update(
         {
-            "ref_prd": str(item["article_no"])[:20],
+            "ref_prd": (str(item["article_no"])[:20] if str(item.get("article_no") or "").strip()
+                        else f"IMP{sy_uk:06d}"),
             "typ_prd": 1,
             "lib_prd": name,
             "lib_prd_rtf": name,
@@ -693,7 +694,19 @@ def evaluate_item(item: dict, products: list[dict], families: list[dict], units:
     family, family_note, family_match = derive_family(item, families)
     internet = open_food_facts_lookup(item)
     notes.extend([unit_note, family_note, internet["note"]])
-    action = "neu anlegen" if unit and family and family_match >= 90 else "manuell pruefen"
+
+    # Create new product whenever a unit can be determined.
+    # Family is best-effort: use whatever derive_family found (any score), or
+    # fall back to the generic PDF_IMPORT placeholder family so the product is
+    # at least in the system and can be re-classified later.
+    if unit:
+        action = "neu anlegen"
+        if not family:
+            family = {"cod_fam_prd_path": PDF_IMPORT_FAMILY, "lib_path": "PDF_IMPORT", "id_taxclass": 0}
+            notes.append("no family matched — using PDF_IMPORT placeholder")
+    else:
+        action = "manuell pruefen"
+
     planned_product = build_product_row(template, item, family, unit, sy_uk) if action == "neu anlegen" else None
     invoice_tax, product_tax, tax_diff = tax_info(item, None)
     return {
