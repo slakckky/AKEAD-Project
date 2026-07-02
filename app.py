@@ -25,7 +25,6 @@ BASE_DIR = Path(__file__).resolve().parent
 PDF_INPUT_DIR = BASE_DIR / "pdf_eingang"
 PDF_IMPORTED_DIR = BASE_DIR / "pdf_importiert"
 PDF_ERROR_DIR = BASE_DIR / "pdf_fehler"
-EXTRACTED_DIR = BASE_DIR / "extracted"
 
 REPORT_FILES = [
     BASE_DIR / "product_match_report.md",
@@ -41,6 +40,9 @@ ERROR_REPORT = BASE_DIR / "import_errors.csv"
 AI_REPORT_MD = BASE_DIR / "ai_match_report.md"
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+_IS_WINDOWS = platform.system() == "Windows"
+_VENV_PYTHON_HINT = r".venv\Scripts\python" if _IS_WINDOWS else ".venv/bin/python"
 
 
 class AkeadImporterApp(tk.Tk):
@@ -70,8 +72,7 @@ class AkeadImporterApp(tk.Tk):
             ("1. Fatura Yukle", [
                 ("PDF Sec ve Yukle", self.choose_pdf),
             ]),
-            ("2. Tara ve Onizle", [
-                ("Faturayi Tara (PDF -> JSON)", lambda: self.run_script("scan_invoice.py", args=[str(PDF_INPUT_DIR)])),
+            ("2. Onizle", [
                 ("Cikarilanlari Onizle (Kontrol Et)", lambda: self.run_script("auto_pdf_import.py", args=["--preview"])),
             ]),
             ("3. Sisteme Kaydet (Taslak)", [
@@ -94,7 +95,6 @@ class AkeadImporterApp(tk.Tk):
                 ("pdf_eingang", lambda: self.open_folder(PDF_INPUT_DIR)),
                 ("pdf_importiert", lambda: self.open_folder(PDF_IMPORTED_DIR)),
                 ("pdf_fehler", lambda: self.open_folder(PDF_ERROR_DIR)),
-                ("extracted (JSON)", lambda: self.open_folder(EXTRACTED_DIR)),
             ]),
         ]
 
@@ -204,12 +204,13 @@ class AkeadImporterApp(tk.Tk):
                 self.after(0, lambda: self.log_line(f"Cikis kodu: {result.returncode}"))
                 if result.returncode != 0:
                     if "ModuleNotFoundError" in output:
-                        self.after(0, lambda: messagebox.showerror(
+                        hint = _VENV_PYTHON_HINT
+                        self.after(0, lambda hint=hint: messagebox.showerror(
                             "Yanlis Python ortami",
                             "Gerekli bir paket bulunamadi (ModuleNotFoundError).\n\n"
                             "VS Code'da sag alt kosedeki Python surumune tiklayip, "
                             "listeden bu projenin .venv klasorundeki Python'u "
-                            "(orn. '.venv/bin/python' yolunu gosteren secenek) "
+                            f"(orn. '{hint}' yolunu gosteren secenek) "
                             "secin, sonra app.py'i tekrar calistirin.",
                         ))
                     else:
@@ -347,12 +348,21 @@ def _relaunch_with_venv_if_needed() -> None:
     except ImportError:
         pass
 
-    venv_dir = BASE_DIR / ".venv" / "bin"
-    venv_python = venv_dir / "python3"
-    if not venv_python.exists():
-        venv_python = venv_dir / "python"
+    if _IS_WINDOWS:
+        venv_python = BASE_DIR / ".venv" / "Scripts" / "python.exe"
+    else:
+        venv_dir = BASE_DIR / ".venv" / "bin"
+        venv_python = venv_dir / "python3"
+        if not venv_python.exists():
+            venv_python = venv_dir / "python"
+
     if venv_python.exists() and Path(sys.executable).resolve() != venv_python.resolve():
-        os.execv(str(venv_python), [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+        launch_args = [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]]
+        if _IS_WINDOWS:
+            subprocess.Popen(launch_args)
+            sys.exit(0)
+        else:
+            os.execv(launch_args[0], launch_args)
     # .venv bulunamadi (orn. henuz kurulmadi) - _check_environment() asagida
     # kullaniciya acik bir hata mesaji gosterecek.
 
@@ -366,14 +376,24 @@ def _check_environment() -> bool:
     except ImportError:
         root = tk.Tk()
         root.withdraw()
+        if _IS_WINDOWS:
+            setup_cmds = (
+                "python -m venv .venv\n"
+                ".venv\\Scripts\\activate\n"
+                "pip install --prefer-binary -r requirements.txt"
+            )
+        else:
+            setup_cmds = (
+                "python3 -m venv .venv\n"
+                "source .venv/bin/activate\n"
+                "pip install --prefer-binary -r requirements.txt"
+            )
         messagebox.showerror(
             "Kurulum eksik",
             "Gerekli paketler (orn. pdfplumber) bulunamadi ve .venv klasoru "
             "ya yok ya da eksik kurulu.\n\n"
             "Terminalde proje klasorunde sirayla calistirin:\n\n"
-            "python3 -m venv .venv\n"
-            "source .venv/bin/activate\n"
-            "pip install --prefer-binary -r requirements.txt",
+            + setup_cmds,
         )
         root.destroy()
         return False

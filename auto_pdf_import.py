@@ -348,7 +348,7 @@ def detect_document_type(text: str, item_count: int) -> tuple[str, bool, list[st
     notes = []
     is_invoice_keyword = "rechnung" in normalized or re.search(r"\b(?:re|rg|r)-", normalized) is not None
     unsafe_keywords = ["proforma", "angebot", "kostenvoranschlag", "bestellung", "auftragsbest"]
-    if "proforma" in normalized:
+    if "proforma" in normalized or "pro-forma" in normalized:
         return "proforma", False, ["Proforma erkannt, keine echte Rechnung"]
     if "angebot" in normalized or "kostenvoranschlag" in normalized:
         return "angebot", False, ["Angebot/Kostenvoranschlag erkannt"]
@@ -390,7 +390,7 @@ def valid_item(item: dict) -> bool:
 
 def normalize_unit(value: str) -> str:
     raw_text = value or ""
-    unit_match = re.search(r"\b(Stk?|Stück|PK|Paket|Packung|Pack|Kart(?:on)?|Kg|kg|KG|g|Gr|L|lt|Fl(?:asche)?|Dose)\b", raw_text, re.IGNORECASE)
+    unit_match = re.search(r"\b(Stk?|Stück|PK|Paket|Packung|Pack|Kart(?:on)?|Kolli?|Kg|kg|KG|g|Gr|L|lt|Fl(?:asche)?|Dose)\b", raw_text, re.IGNORECASE)
     raw = (unit_match.group(1) if unit_match else raw_text).strip().casefold()
     mapping = {
         "pk": "St",
@@ -400,6 +400,8 @@ def normalize_unit(value: str) -> str:
         "pack": "Pack",
         "kart": "Kart",
         "karton": "Kart",
+        "kolli": "Kart",
+        "koll": "Kart",
         "ct": "Kart",
         "fl": "Fl",
         "flasche": "Fl",
@@ -413,13 +415,15 @@ def normalize_unit(value: str) -> str:
         "g": "St",
         "gr": "St",
     }
+    if raw not in mapping and raw.replace(".", "").isdigit():
+        return "St"
     return mapping.get(raw, raw_text[:4] if raw_text else "St")
 
 
 def split_quantity_unit(value: str) -> tuple[Decimal, str]:
     text = " ".join((value or "").split())
     quantity = parse_decimal(text)
-    unit_match = re.search(r"\b(Stk?\.?|Stueck|Stück|PK|Paket|Packung|Pack|Kart\.?|Karton|Kg|kg|KG|g|Gr)\b", text, re.IGNORECASE)
+    unit_match = re.search(r"\b(Stk?\.?|Stueck|Stück|PK|Paket|Packung|Pack|Kart\.?|Karton|Kolli?|Kg|kg|KG|g|Gr)\b", text, re.IGNORECASE)
     unit = unit_match.group(1) if unit_match else text
     return quantity, normalize_unit(unit)
 
@@ -472,22 +476,27 @@ def extract_from_tables(tables: list[list[list[str]]]) -> tuple[list[dict], list
     return dedupe_items(items), notes
 
 
-def column_index(header: list[str], terms: list[str]) -> int | None:
+def column_index(header: list[str], terms: list[str], exclude_if: list[str] | None = None) -> int | None:
     for index, value in enumerate(header):
+        if exclude_if and any(excl in value for excl in exclude_if):
+            continue
         if any(term in value for term in terms):
             return index
     return None
 
 
 def item_from_cells(header: list[str], row: list[str]) -> dict | None:
+    # Use specific terms first; fall back to bare "nr." only when nothing else matches
     idx_article = column_index(header, ["artnr", "art nr", "artikel", "nummer", "ref"])
+    if idx_article is None:
+        idx_article = column_index(header, ["nr."])
     idx_name = column_index(header, ["beschreibung", "bezeichnung", "artikelname", "text"])
     idx_qty = column_index(header, ["menge", "qty", "anzahl"])
     idx_unit = column_index(header, ["einheit", "einh", "unit"])
-    idx_stk_kg = column_index(header, ["stk/kg", "stk kg", "stk", "kg"])
-    idx_price = column_index(header, ["preis", "stpreis", "ep"])
+    idx_stk_kg = column_index(header, ["stk/kg", "stk kg", "vpe", "stk", "kg"])
+    idx_price = column_index(header, ["preis", "stpreis", "ep"], exclude_if=["letzte", "g."])
     idx_tax = column_index(header, ["mwst", "kz", "tax", "ust"])
-    idx_total = column_index(header, ["betrag", "gesamt", "summe", "gpreis"])
+    idx_total = column_index(header, ["betrag", "gesamt", "summe", "gpreis", "g. preis", "g preis"])
     if idx_qty is None or idx_total is None:
         return None
     cells = row + [""] * 10
@@ -496,7 +505,8 @@ def item_from_cells(header: list[str], row: list[str]) -> dict | None:
     carton_qty, pdf_unit = split_quantity_unit(cells[idx_qty])
     if idx_stk_kg is not None and parse_decimal(cells[idx_stk_kg]) != 0:
         quantity = parse_decimal(cells[idx_stk_kg])
-        unit = invoice_base_unit(pdf_unit, article_name)
+        explicit_unit = cells[idx_unit].strip() if idx_unit is not None else ""
+        unit = invoice_base_unit(explicit_unit or pdf_unit, article_name)
         kolli = carton_qty if "kart" in (cells[idx_qty] or "").casefold() else Decimal("0")
         inhalt = quantity
         tax_rate = tax_from_cell(cells[idx_tax]) if idx_tax is not None else ""
@@ -534,11 +544,16 @@ def extract_from_lines(lines: list[str]) -> tuple[list[dict], list[str]]:
         rf"(?P<article>[A-Z0-9][A-Z0-9._/-]{{1,30}})\s+"
         rf"(?P<name>.+?)\s+"
         rf"(?P<qty>\d+(?:[,.]\d+)?)\s+"
-        rf"(?P<unit>St|Stk|Stück|PK|Paket|Packung|Pack|Kart|Karton|Kg|kg|KG|g|Gr|L|lt|Fl|Flasche|Dose)\s+"
+        rf"(?P<unit>St|Stk|Stück|PK|Paket|Packung|Pack|Kart|Karton|Kolli?|Kg|kg|KG|g|Gr|L|lt|Fl|Flasche|Dose)\.?\s+"
         rf"(?:(?P<vpe>\d+(?:[,.]\d+)?)\s+)?"
+        rf"(?:\d+\s+\w+\.?\s+)?"          # optional inhalt text field ("12 St.", "12 Kilo")
+        rf"(?:\d{{1,3}}\s+)*"             # optional integer columns before price (pieces, tax codes)
         rf"(?P<price>{money})\s+"
+        rf"(?:(?P<tax>\d{{1,3}})\s+)?"   # optional tax code integer before total
+        rf"(?:\d{{1,3}}\s+)*"            # optional discount/extra integer columns
         rf"(?P<total>{money})"
-        rf"(?:\s+(?P<tax>\d{{1,2}}(?:[,.]\d+)?%?))?\s*$",
+        rf"(?:\s+\d{{1,3}})*"            # optional trailing integer columns
+        rf"\s*$",
         re.IGNORECASE,
     )
     for raw_line in lines:
@@ -599,6 +614,42 @@ def extract_items(text: str, lines: list[str], tables: list[list[list[str]]]) ->
     return line_items, line_notes + [f"Zeilenparser gewaehlt ({len(line_items)} Positionen)"]
 
 
+_TRANSPOSED_HEADERS: dict[int, list[str]] = {
+    11: ["pos", "art nr", "bezeichnung", "ean", "inhalt", "kolli", "menge",
+         "vk-preis", "kolli-preis", "mwst", "betrag"],
+}
+
+
+def _expand_transposed_table(rows: list[list[str | None]]) -> list[list[str | None]]:
+    """Detect and expand tables where all item values are packed row-wise with newlines.
+    This happens in some PDFs (e.g. SRGL/Hunkar) where pdfplumber puts all data in one row."""
+    if len(rows) != 2:
+        return rows
+    data_row = rows[1]
+    nl_cells = sum(1 for c in data_row if c and "\n" in c)
+    if nl_cells < 3:
+        return rows
+    n_items = max((len(c.split("\n")) for c in data_row if c), default=0)
+    if n_items <= 1:
+        return rows
+    n_cols = len(data_row)
+    header = _TRANSPOSED_HEADERS.get(n_cols)
+    if header is None:
+        best_line = max((rows[0][0] or "").split("\n"), key=lambda l: len(l.split()), default="")
+        tokens = best_line.split()
+        while len(tokens) < n_cols:
+            tokens.append("")
+        header = tokens[:n_cols]
+    proper_rows: list[list[str | None]] = [list(header)]
+    for i in range(n_items):
+        row: list[str | None] = []
+        for cell in data_row:
+            vals = (cell or "").split("\n")
+            row.append(vals[i].strip() if i < len(vals) else "")
+        proper_rows.append(row)
+    return proper_rows
+
+
 def tables_from_pdfplumber_find_tables(pdf_path: Path) -> tuple[list[list[list[str]]], list[str]]:
     tables: list[list[list[str]]] = []
     notes: list[str] = []
@@ -607,7 +658,9 @@ def tables_from_pdfplumber_find_tables(pdf_path: Path) -> tuple[list[list[list[s
             for page_number, page in enumerate(pdf.pages, 1):
                 for table in page.find_tables() or []:
                     rows = table.extract()
-                    cleaned = [[" ".join((cell or "").split()) for cell in row] for row in rows if row]
+                    raw_rows = [[(cell or "") for cell in row] for row in rows if row]
+                    expanded = _expand_transposed_table(raw_rows)
+                    cleaned = [[" ".join((cell or "").split()) for cell in row] for row in expanded]
                     if cleaned:
                         tables.append(cleaned)
                 notes.append(f"pdfplumber.find_tables Seite {page_number} verarbeitet")
@@ -1178,6 +1231,16 @@ def main() -> int:
             print(f"Fehler: {len(errors)} siehe {ERROR_REPORT}")
         print(f"Log-Datei: {LOG_FILE}")
         print(f"Import-Report: {PDF_REPORT}")
+
+        zero_item_results = [r for r in results if r.get("item_count", 0) == 0]
+        if zero_item_results and not errors:
+            for r in zero_item_results:
+                print(
+                    f"HATA: {r['source_file']} icin hic urun satiri cikartilamadi. "
+                    "PDF'in metin tabanli oldugunu kontrol edin (taramali/gorsel PDF desteklenmeyebilir). "
+                    "Bir sonraki adima gecmeden once bu sorunu cozun."
+                )
+            return 1
         return 0
     except Exception as exc:
         logging.exception("Auto-PDF-Import abgebrochen")

@@ -164,9 +164,19 @@ def insert_row(cursor, table: str, row: dict) -> int:
 
 
 def latest_document_id(cursor) -> int:
-    row = fetch_one(cursor, "SELECT id FROM pdf_import_documents ORDER BY id DESC LIMIT 1")
+    row = fetch_one(cursor, """
+        SELECT d.id
+        FROM pdf_import_documents d
+        WHERE EXISTS (SELECT 1 FROM pdf_import_items i WHERE i.document_id = d.id)
+        ORDER BY d.id DESC
+        LIMIT 1
+    """)
     if not row:
-        raise ValueError("Kein Staging-Dokument gefunden.")
+        raise ValueError(
+            "Staging'de satir iceren bir belge bulunamadi. "
+            "Adim 3 (Faturayi Sisteme Kaydet) once calistirilmali ve "
+            "PDF'den en az bir urun satiri cikarilmis olmali."
+        )
     return int(row["id"])
 
 

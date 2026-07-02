@@ -1,3 +1,4 @@
 @echo off
-cd /d C:\akead-invoice-matcher
+cd /d "%~dp0"
 python app.py
+pause

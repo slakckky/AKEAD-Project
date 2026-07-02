@@ -55,7 +55,7 @@ AI_REPORT_MD = BASE_DIR / "ai_match_report.md"
 AI_REPORT_CSV = BASE_DIR / "ai_match_report.csv"
 
 MODEL = "claude-opus-4-8"
-MAX_CANDIDATES = 8
+MAX_CANDIDATES = 20
 AUTO_APPLY_THRESHOLD = 85  # --apply sadece bu guven puaninin uzerindekileri yazar
 
 SYSTEM_PROMPT = """Sen AKEAD adli bir gida toptan satis sirketi icin fatura satirlarini \
