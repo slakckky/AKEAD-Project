@@ -324,6 +324,20 @@ def parse_date(value: str) -> str | None:
     return None
 
 
+def _trim_to_company_name(raw: str) -> str:
+    """Strip address/street parts after the company name.
+    'Demka GmbH / Lembacher Str. 28 / 68229 Mannheim' -> 'Demka GmbH'
+    """
+    # Split on ' / ', ', ', ' - ' that precede address-like tokens
+    parts = re.split(r"\s*/\s*|\s+[-–]\s+", raw)
+    # Take the first part that looks like a company name (has letters, not just numbers)
+    for part in parts:
+        part = part.strip()
+        if part and re.search(r"[A-Za-zÄÖÜäöüß]", part):
+            return part[:255]
+    return raw[:255]
+
+
 def detect_supplier(lines: list[str], text: str) -> str:
     ignore = re.compile(
         r"^(nr\.?|artikel|beschreibung|menge|einheit|preis|betrag)$"
@@ -339,7 +353,7 @@ def detect_supplier(lines: list[str], text: str) -> str:
         if len(clean) < 3 or ignore.search(clean):
             continue
         if company_suffix.search(clean):
-            return clean[:255]
+            return _trim_to_company_name(clean)
 
     # Pass 2: fall back to first non-ignored line with letters
     for line in lines[:20]:
@@ -347,7 +361,7 @@ def detect_supplier(lines: list[str], text: str) -> str:
         if len(clean) < 3 or ignore.search(clean):
             continue
         if re.search(r"[A-Za-zÄÖÜäöüß]", clean):
-            return clean[:255]
+            return _trim_to_company_name(clean)
 
     return first_match([r"Lieferant\s*:?\s*(.+)"], text)[:255]
 
