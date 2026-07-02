@@ -530,14 +530,14 @@ def build_product_row(template: dict, item: dict, family: dict, unit: str, sy_uk
     row = {key: value for key, value in template.items() if key != "id"}
     row.update(
         {
-            "ref_prd": (str(item["article_no"])[:20] if str(item.get("article_no") or "").strip()
-                        else f"IMP{sy_uk:06d}"),
+            "ref_prd": f"IMP{sy_uk:06d}",
             "typ_prd": 1,
             "lib_prd": name,
             "lib_prd_rtf": name,
             "lib_prd_html": None,
             "lib_ticket": name[:50],
-            "lib_tech": None,
+            "lib_tech": (f"Lief-Art-Nr: {item['article_no']}"
+                         if str(item.get("article_no") or "").strip() else None),
             "cod_fam_prd_path": family["cod_fam_prd_path"],
             "cod_grp_prd_path_1": "",
             "cod_grp_prd_path_2": "",
