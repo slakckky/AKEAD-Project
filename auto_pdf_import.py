@@ -424,16 +424,16 @@ def normalize_unit(value: str) -> str:
     unit_match = re.search(r"\b(Stk?|Stück|PK|Paket|Packung|Pack|Kart(?:on)?|Kolli?|Kg|kg|KG|g|Gr|L|lt|Fl(?:asche)?|Dose)\b", raw_text, re.IGNORECASE)
     raw = (unit_match.group(1) if unit_match else raw_text).strip().casefold()
     mapping = {
-        "pk": "St",
-        "pak": "St",
-        "paket": "St",
-        "packung": "Pack",
-        "pack": "Pack",
-        "kart": "Kart",
-        "karton": "Kart",
-        "kolli": "Kart",
-        "koll": "Kart",
-        "ct": "Kart",
+        "pk": "KOL",
+        "pak": "KOL",
+        "paket": "KOL",
+        "packung": "KOL",
+        "pack": "KOL",
+        "kart": "KOL",
+        "karton": "KOL",
+        "kolli": "KOL",
+        "koll": "KOL",
+        "ct": "KOL",
         "fl": "Fl",
         "flasche": "Fl",
         "flaschen": "Fl",
@@ -463,8 +463,8 @@ def invoice_base_unit(pdf_unit: str, article_name: str = "") -> str:
     raw = f"{pdf_unit or ''} {article_name or ''}".casefold()
     if "kg" in raw:
         return "Kg"
-    if "kart" in raw or "pk" in raw or "pak" in raw:
-        return "St"
+    if "kol" in raw or "kart" in raw or "pk" in raw or "pak" in raw:
+        return "KOL"
     return normalize_unit(pdf_unit or "St")
 
 
@@ -536,11 +536,21 @@ def item_from_cells(header: list[str], row: list[str]) -> dict | None:
     article_name = cells[idx_name].strip() if idx_name is not None else " ".join(cell for cell in cells if cell).strip()
     carton_qty, pdf_unit = split_quantity_unit(cells[idx_qty])
     if idx_stk_kg is not None and parse_decimal(cells[idx_stk_kg]) != 0:
-        quantity = parse_decimal(cells[idx_stk_kg])
+        stk_kg_value = parse_decimal(cells[idx_stk_kg])
         explicit_unit = cells[idx_unit].strip() if idx_unit is not None else ""
-        unit = invoice_base_unit(explicit_unit or pdf_unit, article_name)
-        kolli = carton_qty if "kart" in (cells[idx_qty] or "").casefold() else Decimal("0")
-        inhalt = quantity
+        base_unit = invoice_base_unit(explicit_unit or pdf_unit, article_name)
+        if base_unit == "KOL":
+            # Menge = cases ordered; VPE/Stk column = pieces per case
+            quantity = carton_qty
+            unit = "KOL"
+            kolli = carton_qty
+            inhalt = stk_kg_value
+        else:
+            # Stk/Kg column is the main quantity in base units
+            quantity = stk_kg_value
+            unit = base_unit
+            kolli = carton_qty if "kart" in (cells[idx_qty] or "").casefold() else Decimal("0")
+            inhalt = stk_kg_value
         tax_rate = tax_from_cell(cells[idx_tax]) if idx_tax is not None else ""
     else:
         quantity = carton_qty
