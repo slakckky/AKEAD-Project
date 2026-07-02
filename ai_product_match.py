@@ -434,16 +434,16 @@ def main() -> int:
 
         unresolved = build_unresolved_payload(plan["evaluations"], products, families, allowed_units)
         if not unresolved:
-            print("Manuel kontrol/oneri gerektiren satir yok - AI'ya gonderilecek bir sey bulunamadi.")
+            print("No rows requiring manual review/suggestion - nothing to send to AI.")
             return 0
 
-        print(f"{len(unresolved)} satir AI'ya gonderiliyor (model: {MODEL}, tedarikci: {supplier_name or 'bilinmiyor'})...")
+        print(f"Sending {len(unresolved)} rows to AI (model: {MODEL}, supplier: {supplier_name or 'unknown'})...")
         client = anthropic.Anthropic()
         result = call_claude(client, supplier_name, unresolved)
 
         result, warnings = validate_matches(result, unresolved, allowed_units)
         if warnings:
-            print(f"AI ciktisinda {len(warnings)} dogrulama uyarisi (gecersizler yok sayildi):")
+            print(f"{len(warnings)} validation warning(s) in AI output (invalid entries skipped):")
             for warning in warnings:
                 print(f"  - {warning}")
 
@@ -451,19 +451,19 @@ def main() -> int:
         write_report(unresolved, result, products_by_id)
 
         high_confidence = [m for m in result.matches if m.product_id and m.confidence >= AUTO_APPLY_THRESHOLD]
-        print(f"AI raporu yazildi: {AI_REPORT_MD}")
-        print(f"Yuksek guvenli ({AUTO_APPLY_THRESHOLD}%+) oneri sayisi: {len(high_confidence)} / {len(unresolved)}")
+        print(f"AI report written: {AI_REPORT_MD}")
+        print(f"High-confidence ({AUTO_APPLY_THRESHOLD}%+) suggestions: {len(high_confidence)} / {len(unresolved)}")
 
         if not args.apply:
-            print("Sadece rapor uretildi (dry run). Yazmak icin --apply kullanin.")
+            print("Report only (dry run). Use --apply to write.")
             return 0
 
         confirmation = input(
-            f"{len(high_confidence)} yuksek guvenli AI onerisini pdf_import_items.product_id'ye "
-            "yazmak icin tam olarak JA yazin: "
+            f"Type exactly JA to write {len(high_confidence)} high-confidence AI suggestions "
+            "to pdf_import_items.product_id: "
         ).strip()
         if confirmation != "JA":
-            print("Iptal edildi. Hicbir sey yazilmadi.")
+            print("Cancelled. Nothing written.")
             return 0
 
         write_connection = ppm.connect_db(config)
@@ -471,11 +471,11 @@ def main() -> int:
             applied = apply_matches(write_connection, unresolved, result)
         finally:
             write_connection.close()
-        print(f"{applied} satir guncellendi.")
+        print(f"{applied} rows updated.")
         return 0
 
     except Exception as exc:
-        print(f"Hata: {exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 

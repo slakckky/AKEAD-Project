@@ -1,52 +1,53 @@
-# AKEAD Invoice Matcher
+# AKEAD Invoice Importer
 
-PDF faturaları okuyup AKEAD'in MySQL veritabanindaki urunlerle eslestiren masaustu uygulamasi.
-Tkinter (Python) ile yazilmistir, Mac ve Windows'ta calisir.
+Desktop application (Tkinter / Python) that reads PDF invoices and matches the line items
+against products in the AKEAD MySQL database.
+Runs on Windows (office PC) and macOS (development).
 
-## Mimari (6 aktif dosya)
-
-```
-app.py                      → Tkinter GUI (ana giris noktasi)
-auto_pdf_import.py          → PDF parser: metin/tablo cikarimi, staging DB'ye yazma
-professional_product_match.py → Kural tabanli urun eslestirme (exact / barcode / fuzzy)
-ai_product_match.py         → Claude AI ile zor eslestirmeler icin oneri
-import_to_invoices.py       → Onayli eslestirmeleri gercek AKEAD tablolarina aktarma
-test_db.py                  → MySQL baglanti testi (yardimci arac)
-```
+## Architecture — 6 active files
 
 ```
-create_pdf_import_tables.sql → Staging tablolari sema SQL'i
-requirements.txt             → Python bagimliliklari
-setup.bat                    → Windows kurulum (venv + pip install)
-start_akead_importer.bat     → Windows baslatic
+app.py                        Main entry point — Tkinter GUI
+auto_pdf_import.py            PDF parser: text/table extraction, writes to staging DB
+professional_product_match.py Rule-based product matching (exact / barcode / fuzzy)
+ai_product_match.py           Claude AI suggestions for hard-to-match items
+import_to_invoices.py         Writes approved matches into the real AKEAD tables
+test_db.py                    MySQL connection test (utility script)
 ```
 
-## 5 Adimli Is Akisi (GUI)
-
 ```
-1. Fatura Yukle     → PDF'i pdf_eingang/ klasorune kopyalar
-2. Onizle           → auto_pdf_import.py --preview (DB'ye yazmadan satirlari gosterir)
-3. Sisteme Kaydet   → auto_pdf_import.py (pdf_import_documents + pdf_import_items tablolarina yazar)
-4. Urun Eslestirme  → professional_product_match.py (kural tabanli)
-                     → ai_product_match.py (AI onerisi, istenirse)
-5. Faturayi Tamamla → import_to_invoices.py (AKEAD invoices tablolarina aktarim)
+create_pdf_import_tables.sql  Staging table schema
+requirements.txt              Python dependencies
+setup.bat                     One-click Windows setup (venv + pip install)
+start_akead_importer.bat      Windows launcher
 ```
 
-Her yazma adimi onay gerektirir (dry-run + JA/NEIN).
+## 5-Step Workflow (GUI)
 
-## Kurulum
+```
+1. Load Invoice     Copy PDF into pdf_eingang/
+2. Preview          auto_pdf_import.py --preview  (shows extracted rows, writes nothing)
+3. Save to Staging  auto_pdf_import.py            (writes to pdf_import_documents + pdf_import_items)
+4. Product Matching professional_product_match.py (rule-based, dry-run then confirm)
+                    ai_product_match.py           (AI report, optional)
+5. Finalize Invoice import_to_invoices.py         (dry-run then confirm, writes to AKEAD invoices)
+```
 
-### Windows (ofis PC)
+Every write step requires explicit confirmation (dry-run output shown first, then Yes/No).
+
+## Setup
+
+### Windows (office PC)
 
 ```bat
-:: Tek seferlik kurulum:
+:: One-time setup:
 setup.bat
 
-:: Sonraki kullanimlarda:
+:: On subsequent launches:
 start_akead_importer.bat
 ```
 
-### Mac / Linux (gelistirme)
+### macOS / Linux (development)
 
 ```bash
 python3 -m venv .venv
@@ -55,101 +56,101 @@ pip install --prefer-binary -r requirements.txt
 python app.py
 ```
 
-## Konfigurasyun (.env)
+## Configuration (.env)
 
-Proje dizininde `.env` dosyasi olusturun:
+Create a `.env` file in the project root:
 
 ```
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_USER=codex_read
-DB_PASSWORD=sifreniz
+DB_PASSWORD=yourpassword
 DB_NAME=datenbank
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-`ANTHROPIC_API_KEY` olmadan adim 1-3 ve 4a (kural tabanli eslestirme) tam calisir.
-Sadece "AI'dan Oneri Al" butonu API anahtari gerektirir.
+Steps 1–3 and 4a (rule-based matching) work without `ANTHROPIC_API_KEY`.
+Only the "Get AI Suggestions" button requires the API key.
 
-MySQL sunucusu ofis PC'sindedir (127.0.0.1); uygulamayi o PC'de calistirin.
+The MySQL server runs on the office PC (127.0.0.1); run the app on that machine.
 
-## Barkod Eslestirme
+## Barcode Matching
 
-### Faturada barkod VARSA (EAN-8 / EAN-13 / EAN-14)
+### Invoices with barcodes (EAN-8 / EAN-13 / EAN-14)
 
-`auto_pdf_import.py` her satirin `raw_line` alanina tum hucre degerlerini yazar.
-`professional_product_match.py`'daki `barcode_candidates()` bu alanda
-`\b\d{8,14}\b` regex'iyle barkodlari otomatik bulur ve AKEAD'in `codebarres`
-tablosunda arar.
+`auto_pdf_import.py` writes all cell values for each line into the `raw_line` field.
+`barcode_candidates()` in `professional_product_match.py` finds barcodes in that field
+using the regex `\b\d{8,14}\b` and looks them up in AKEAD's `codebarres` table.
 
-Ornek: Hunkar / SRGL faturasindaki EAN-13 kodlari (3760091938473 vb.)
-otomatik eslenir.
+Example: EAN-13 codes in Hunkar / SRGL invoices (e.g. 3760091938473) are matched
+automatically this way.
 
-### Faturada barkod YOKSA
+### Invoices without barcodes
 
-Sirali eslestirme stratejisi:
+Four-layer matching strategy applied in order:
 
-1. **Tam referans kodu** → `produits.ref_prd` ile birebir eslesme
-2. **Barkod** → `codebarres.barcode` tablosu (ham satirdan regex ile)
-3. **Bulanik isim** → `difflib.SequenceMatcher` ile urun adi benzerligi
-4. **AI onerisi** → Claude `claude-opus-4-8` - eksik, kisaltilmis veya
-   dil farki olan isimler icin (orn. "Honig Sy" → "Honig Sirup")
+1. **Exact reference code** — direct lookup against `produits.ref_prd`
+2. **Barcode** — `codebarres.barcode` table (via regex on `raw_line`)
+3. **Fuzzy name** — `difflib.SequenceMatcher` on product name
+4. **AI suggestion** — Claude `claude-opus-4-8` for abbreviated, truncated, or
+   cross-language names (e.g. "Honig Sy" → "Honig Sirup")
 
-Bu 4 katman birlestigi icin barkod olmayan faturalar da yuksek eslesme
-orani saglar.
+All four layers run even when no barcode is present, so suppliers like Brajlovic,
+Bursam, Bazar and Demka still achieve high match rates.
 
-### Barkod bulunamayan urunler
+### Unmatched items
 
-`professional_product_match.py` raporu (`product_match_report.md`) soyle siniflandirir:
+`professional_product_match.py` classifies each row in its report:
 
-- `auto_match` → yuksek guvenli, otomatik eslendi
-- `vorschlag` → onerisi var, manual onay bekliyor
-- `manuell_pruefen` → eslesme bulunamadi, AI'a gonderilir
+| Status | Meaning |
+|--------|---------|
+| `auto_match` | High-confidence, matched automatically |
+| `vorschlag` | Suggestion found, awaiting manual approval |
+| `manuell pruefen` | No match found, sent to AI |
 
-`manuell_pruefen` satirlar `ai_product_match.py` ile Claude'a gonderilir.
-Claude AKEAD urun listesinden en olasi eslemeyi secer; yoksa `no_match`
-doner (barkod uydurmaz).
+Rows classified as `manuell pruefen` are forwarded to `ai_product_match.py`.
+Claude selects the most likely AKEAD product; if none fits it returns `no_match`
+(it never invents barcodes or product IDs).
 
-## Desteklenen Fatura Formatlari
+## Supported Invoice Formats
 
-| Tedarikci | Format | Barkod | Pozisyon |
-|-----------|--------|--------|----------|
-| Brajlovic GmbH | Serbest metin (pdfplumber) | Yok | 88+ |
-| Bursam e.K. / AY Market | Tablo | Yok | 33 |
-| Onkel-Sahingoz / Bazar | Serbest metin | Yok | 56+ |
-| Demka GmbH | Tablo | Yok | 56 |
-| SRGL KG / Hunkar | Ozel matris tablo | EAN-13 | 11 |
+| Supplier | Format | Barcode | Positions |
+|----------|--------|---------|-----------|
+| Brajlovic GmbH | Free text (pdfplumber) | No | 88+ |
+| Bursam e.K. / AY Market | Table | No | 33 |
+| Onkel-Sahingoz / Bazar | Free text | No | 56+ |
+| Demka GmbH | Table | No | 56 |
+| SRGL KG / Hunkar | Transposed matrix table | EAN-13 | 11 |
 
-## MySQL Staging Semasi
+## MySQL Staging Schema
 
 ```sql
--- Sema dosyasi:
+-- Schema file:
 create_pdf_import_tables.sql
 ```
 
-Iki staging tablosu:
-- `pdf_import_documents` → fatura baslik bilgisi
-- `pdf_import_items` → fatura kalemleri (bir belgeye bagli)
+Two staging tables:
+- `pdf_import_documents` — invoice header (supplier, date, document number, type)
+- `pdf_import_items` — invoice line items linked to a document
 
-Gercek AKEAD tablolari (orders, invoices, produits, clients, vendors)
-sadece adim 5'te yazilir.
+Real AKEAD tables (`orders`, `invoices`, `produits`, `clients`, `vendors`) are only
+written to in step 5.
 
-## Platform Notlari
+## Platform Notes
 
 ### Windows
-- `app.py` iki farkli Python yolu dener:
-  `.venv\Scripts\python.exe` (Windows) / `.venv/bin/python3` (Mac/Linux)
-- Yanlis Python'la baslarsa `subprocess.Popen` ile `.venv` Python'uyla
-  kendini yeniden baslatir
+`app.py` tries two Python paths: `.venv\Scripts\python.exe` (Windows) and
+`.venv/bin/python3` (macOS/Linux). If it starts under the wrong interpreter it
+re-launches itself under the `.venv` Python via `subprocess.Popen`.
 
-### Mac
-- `os.execv()` ile `.venv` Python'una gecis yapar
-- Klasor/dosya acma: `open` komutu kullanilir
+### macOS
+Uses `os.execv()` to switch to the `.venv` interpreter.
+Opens files/folders with the `open` shell command.
 
-## Hassas Dosyalar (asla commit etme)
+## Sensitive Files (never commit)
 
-`.gitignore` bunlari disarda tutar:
-- `.env` - DB sifresi ve API anahtari
-- `pdf_eingang/`, `pdf_importiert/`, `pdf_fehler/` - gercek musteri faturalari
-- `*.csv`, `*.md` (raporlar haric)
+`.gitignore` excludes:
+- `.env` — database password and API key
+- `pdf_eingang/`, `pdf_importiert/`, `pdf_fehler/` — real customer invoices
+- `*.csv`, `*.md` (except this README and SQL schema)
 - `backup_vor_codex.sql`, `debug_*.txt`

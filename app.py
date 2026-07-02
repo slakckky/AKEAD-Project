@@ -48,7 +48,7 @@ _VENV_PYTHON_HINT = r".venv\Scripts\python" if _IS_WINDOWS else ".venv/bin/pytho
 class AkeadImporterApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("AKEAD Fatura Aktarici")
+        self.title("AKEAD Invoice Importer")
         self.geometry("1200x880")
         self.minsize(950, 650)
         self.running = False
@@ -69,29 +69,29 @@ class AkeadImporterApp(tk.Tk):
         # Butonlar gercek is akisina gore numarali bolumlere ayrildi - hangi
         # adimda oldugunuz, sonraki adimin ne oldugu acik olsun diye.
         sections = [
-            ("1. Fatura Yukle", [
-                ("PDF Sec ve Yukle", self.choose_pdf),
+            ("1. Load Invoice", [
+                ("Select & Load PDF", self.choose_pdf),
             ]),
-            ("2. Onizle", [
-                ("Cikarilanlari Onizle (Kontrol Et)", lambda: self.run_script("auto_pdf_import.py", args=["--preview"])),
+            ("2. Preview", [
+                ("Preview Extracted Items (Check)", lambda: self.run_script("auto_pdf_import.py", args=["--preview"])),
             ]),
-            ("3. Sisteme Kaydet (Taslak)", [
-                ("Faturayi Sisteme Kaydet", lambda: self.run_script("auto_pdf_import.py")),
+            ("3. Save to Staging", [
+                ("Save Invoice to Staging DB", lambda: self.run_script("auto_pdf_import.py")),
             ]),
-            ("4. Urun Eslestirme", [
-                ("AKEAD Urunleriyle Eslestir", lambda: self.run_dry_then_confirm("professional_product_match.py", "Urun eslestirme/olusturma sonuclari AKEAD'e yazilsin mi?")),
-                ("AI'dan Oneri Al (Rapor)", lambda: self.run_script("ai_product_match.py")),
-                ("AI Onerilerini Onayla ve Kaydet", self.run_ai_apply),
+            ("4. Product Matching", [
+                ("Match with AKEAD Products", lambda: self.run_dry_then_confirm("professional_product_match.py", "Write product matching results to AKEAD?")),
+                ("Get AI Suggestions (Report)", lambda: self.run_script("ai_product_match.py")),
+                ("Approve & Save AI Suggestions", self.run_ai_apply),
             ]),
-            ("5. Faturayi Tamamla", [
-                ("Faturayi AKEAD'e Aktar", lambda: self.run_dry_then_confirm("import_to_invoices.py", "Fatura gercekten AKEAD'e aktarilsin mi?")),
+            ("5. Finalize Invoice", [
+                ("Import Invoice to AKEAD", lambda: self.run_dry_then_confirm("import_to_invoices.py", "Really import invoice to AKEAD?")),
             ]),
-            ("Raporlar", [
-                ("Eslestirme Raporunu Ac", self.open_import_report),
-                ("AI Raporunu Ac", lambda: self.open_file(AI_REPORT_MD)),
-                ("Hata Raporunu Ac", lambda: self.open_file(ERROR_REPORT)),
+            ("Reports", [
+                ("Open Match Report", self.open_import_report),
+                ("Open AI Report", lambda: self.open_file(AI_REPORT_MD)),
+                ("Open Error Report", lambda: self.open_file(ERROR_REPORT)),
             ]),
-            ("Klasorler (Gelismis)", [
+            ("Folders (Advanced)", [
                 ("pdf_eingang", lambda: self.open_folder(PDF_INPUT_DIR)),
                 ("pdf_importiert", lambda: self.open_folder(PDF_IMPORTED_DIR)),
                 ("pdf_fehler", lambda: self.open_folder(PDF_ERROR_DIR)),
@@ -109,9 +109,9 @@ class AkeadImporterApp(tk.Tk):
 
         status_frame = ttk.Frame(root)
         status_frame.pack(fill=tk.X, pady=(10, 6))
-        self.status_var = tk.StringVar(value="Hazir")
+        self.status_var = tk.StringVar(value="Ready")
         ttk.Label(status_frame, textvariable=self.status_var).pack(side=tk.LEFT)
-        ttk.Button(status_frame, text="Ciktiyi temizle", command=self.clear_output).pack(side=tk.RIGHT)
+        ttk.Button(status_frame, text="Clear output", command=self.clear_output).pack(side=tk.RIGHT)
 
         self.output = scrolledtext.ScrolledText(root, wrap=tk.WORD, height=18, font=("Consolas", 10))
         self.output.pack(fill=tk.BOTH, expand=True)
@@ -133,61 +133,61 @@ class AkeadImporterApp(tk.Tk):
 
     def choose_pdf(self) -> None:
         if self.running:
-            messagebox.showwarning("AKEAD Fatura Aktarici", "Zaten bir script calisiyor.")
+            messagebox.showwarning("AKEAD Invoice Importer", "A script is already running.")
             return
 
         path = filedialog.askopenfilename(
-            title="PDF sec",
-            filetypes=[("PDF Dosyalari", "*.pdf"), ("Tum Dosyalar", "*.*")],
+            title="Select PDF",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
         )
         if not path:
             return
 
         source = Path(path)
         if source.suffix.casefold() != ".pdf":
-            messagebox.showerror("AKEAD Fatura Aktarici", "Lutfen bir PDF dosyasi secin.")
+            messagebox.showerror("AKEAD Invoice Importer", "Please select a PDF file.")
             return
 
         target = PDF_INPUT_DIR / source.name
         try:
             if target.exists():
                 overwrite = messagebox.askyesno(
-                    "Dosya zaten var",
-                    f"{target.name} pdf_eingang klasorunde zaten var. Uzerine yazilsin mi?",
+                    "File already exists",
+                    f"{target.name} already exists in pdf_eingang. Overwrite?",
                 )
                 if not overwrite:
                     return
             shutil.copy2(source, target)
-            self.log_line(f"PDF kopyalandi: {source} -> {target}")
+            self.log_line(f"PDF copied: {source} -> {target}")
             self._warn_if_multiple_pdfs()
         except Exception as exc:
-            messagebox.showerror("Kopyalama hatasi", str(exc))
-            self.log_line(f"Kopyalama hatasi: {exc}")
+            messagebox.showerror("Copy error", str(exc))
+            self.log_line(f"Copy error: {exc}")
 
     def _warn_if_multiple_pdfs(self) -> None:
         pdfs = sorted(PDF_INPUT_DIR.glob("*.pdf"))
         if len(pdfs) > 1:
             names = "\n".join(path.name for path in pdfs)
             messagebox.showwarning(
-                "Giriste birden fazla PDF var",
-                "pdf_eingang klasorunde birden fazla PDF var. Mevcut script'ler genelde ilk dosyayi okur:\n\n"
+                "Multiple PDFs in input folder",
+                "pdf_eingang contains more than one PDF. Scripts will use the first file:\n\n"
                 + names,
             )
-            self.log_line("Uyari: pdf_eingang klasorunde birden fazla PDF var:")
+            self.log_line("Warning: multiple PDFs found in pdf_eingang:")
             for path in pdfs:
                 self.log_line(f"  - {path.name}")
 
     def run_script(self, script_name: str, input_text: str | None = None, after=None, args: list[str] | None = None) -> None:
         if self.running:
-            messagebox.showwarning("AKEAD Fatura Aktarici", "Zaten bir script calisiyor.")
+            messagebox.showwarning("AKEAD Invoice Importer", "A script is already running.")
             return
         script_path = BASE_DIR / script_name
         if not script_path.exists():
-            messagebox.showerror("Script bulunamadi", f"{script_name} bulunamadi.")
+            messagebox.showerror("Script not found", f"{script_name} not found.")
             return
 
         def worker() -> None:
-            self.after(0, lambda: self.set_running(True, f"Calisiyor: {script_name}"))
+            self.after(0, lambda: self.set_running(True, f"Running: {script_name}"))
             self.after(0, lambda: self.log_line(f"\n=== {script_name} ==="))
             try:
                 result = subprocess.run(
@@ -201,37 +201,36 @@ class AkeadImporterApp(tk.Tk):
                 )
                 output = result.stdout or ""
                 self.after(0, lambda: self.log(output))
-                self.after(0, lambda: self.log_line(f"Cikis kodu: {result.returncode}"))
+                self.after(0, lambda: self.log_line(f"Exit code: {result.returncode}"))
                 if result.returncode != 0:
                     if "ModuleNotFoundError" in output:
                         hint = _VENV_PYTHON_HINT
                         self.after(0, lambda hint=hint: messagebox.showerror(
-                            "Yanlis Python ortami",
-                            "Gerekli bir paket bulunamadi (ModuleNotFoundError).\n\n"
-                            "VS Code'da sag alt kosedeki Python surumune tiklayip, "
-                            "listeden bu projenin .venv klasorundeki Python'u "
-                            f"(orn. '{hint}' yolunu gosteren secenek) "
-                            "secin, sonra app.py'i tekrar calistirin.",
+                            "Wrong Python environment",
+                            "A required package was not found (ModuleNotFoundError).\n\n"
+                            "In VS Code click the Python version in the bottom-right corner "
+                            "and select the .venv interpreter for this project "
+                            f"(the option showing '{hint}'), then restart app.py.",
                         ))
                     else:
-                        self.after(0, lambda: messagebox.showerror("Script hatasi", f"{script_name}, {result.returncode} cikis koduyla sona erdi."))
+                        self.after(0, lambda: messagebox.showerror("Script error", f"{script_name} exited with code {result.returncode}."))
                 if after:
                     self.after(0, lambda: after(result.returncode, output))
             except Exception as exc:
-                self.after(0, lambda: self.log_line(f"Hata: {exc}"))
-                self.after(0, lambda: messagebox.showerror("Hata", str(exc)))
+                self.after(0, lambda: self.log_line(f"Error: {exc}"))
+                self.after(0, lambda: messagebox.showerror("Error", str(exc)))
             finally:
-                self.after(0, lambda: self.set_running(False, "Hazir"))
+                self.after(0, lambda: self.set_running(False, "Ready"))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def run_dry_then_confirm(self, script_name: str, question: str) -> None:
         script_path = BASE_DIR / script_name
         if not script_path.exists():
-            messagebox.showerror("Script bulunamadi", f"{script_name} bulunamadi.")
+            messagebox.showerror("Script not found", f"{script_name} not found.")
             return
         if self.running:
-            messagebox.showwarning("AKEAD Fatura Aktarici", "Zaten bir script calisiyor.")
+            messagebox.showwarning("AKEAD Invoice Importer", "A script is already running.")
             return
 
         def after_dry_run(exit_code: int, output: str) -> None:
@@ -239,33 +238,32 @@ class AkeadImporterApp(tk.Tk):
                 return
             if self._output_blocks_import(output):
                 messagebox.showwarning(
-                    "Import engellendi",
-                    "Deneme calistirmasi bir hata ya da guvensiz alan bildiriyor. JA gonderilmeyecek.",
+                    "Import blocked",
+                    "Dry run reported an error or unsafe field. JA will not be sent.",
                 )
                 return
             if not self._looks_like_dry_run(output):
                 messagebox.showwarning(
-                    "Deneme calistirmasi guvenilir sekilde algilanamadi",
-                    "Ciktida acik bir deneme/on izleme isareti bulunamadi. JA gonderilmeyecek.",
+                    "Dry run not detected",
+                    "No clear dry-run marker found in output. JA will not be sent.",
                 )
                 return
-            if messagebox.askyesno("Onay", question):
+            if messagebox.askyesno("Confirm", question):
                 self.run_script(script_name, input_text="JA\n")
 
         self.run_script(script_name, input_text="NEIN\n", after=after_dry_run)
 
     def run_ai_apply(self) -> None:
-        # ai_product_match.py'nin dry-run/onay akisi diger script'lerden farkli:
-        # argumansiz calistirma zaten her zaman sadece rapor uretir (zararsiz),
-        # gercek yazma sadece --apply ile ve scriptin kendi JA sorusuyla olur.
-        # Bu yuzden burada run_dry_then_confirm yerine ayri, basit bir onay var.
+        # ai_product_match.py dry-run/confirm flow differs from other scripts:
+        # running without args always produces only a report (safe); actual writes
+        # happen only with --apply and the script's own JA prompt.
         if self.running:
-            messagebox.showwarning("AKEAD Fatura Aktarici", "Zaten bir script calisiyor.")
+            messagebox.showwarning("AKEAD Invoice Importer", "A script is already running.")
             return
         if not messagebox.askyesno(
-            "Onay",
-            "AI raporunu incelediginizden emin misiniz? Yuksek guvenli (>=85) "
-            "AI onerileri pdf_import_items.product_id'ye yazilacak. Devam edilsin mi?",
+            "Confirm",
+            "Have you reviewed the AI report? High-confidence (>=85) "
+            "AI suggestions will be written to pdf_import_items.product_id. Continue?",
         ):
             return
         self.run_script("ai_product_match.py", args=["--apply"], input_text="JA\n")
@@ -313,25 +311,25 @@ class AkeadImporterApp(tk.Tk):
     def open_file(self, path: Path) -> None:
         try:
             if not path.exists():
-                messagebox.showwarning("Dosya yok", f"{path.name} henuz olusturulmadi.")
+                messagebox.showwarning("File not found", f"{path.name} has not been created yet.")
                 return
             self._open_path(path)
         except Exception as exc:
-            messagebox.showerror("Acma basarisiz", str(exc))
+            messagebox.showerror("Open failed", str(exc))
 
     def open_folder(self, path: Path) -> None:
         try:
             path.mkdir(exist_ok=True)
             self._open_path(path)
         except Exception as exc:
-            messagebox.showerror("Klasor acma basarisiz", str(exc))
+            messagebox.showerror("Folder open failed", str(exc))
 
     def open_import_report(self) -> None:
         for path in REPORT_FILES:
             if path.exists():
                 self.open_file(path)
                 return
-        messagebox.showwarning("Rapor yok", "Henuz bir import raporu bulunamadi.")
+        messagebox.showwarning("No report", "No import report has been generated yet.")
 
 
 def _relaunch_with_venv_if_needed() -> None:
@@ -368,9 +366,8 @@ def _relaunch_with_venv_if_needed() -> None:
 
 
 def _check_environment() -> bool:
-    """Yukarida otomatik yeniden baslatma denendi ama .venv hic yoksa ya da
-    icinde pdfplumber kurulu degilse, bunu en basta tek ve net bir mesajla
-    yakalamak - butonlar ayri ayri 'ModuleNotFoundError' ile patlamasin."""
+    """Catch missing .venv / pdfplumber up front with a clear message so
+    individual buttons don't each explode with ModuleNotFoundError."""
     try:
         import pdfplumber  # noqa: F401
     except ImportError:
@@ -389,10 +386,9 @@ def _check_environment() -> bool:
                 "pip install --prefer-binary -r requirements.txt"
             )
         messagebox.showerror(
-            "Kurulum eksik",
-            "Gerekli paketler (orn. pdfplumber) bulunamadi ve .venv klasoru "
-            "ya yok ya da eksik kurulu.\n\n"
-            "Terminalde proje klasorunde sirayla calistirin:\n\n"
+            "Setup incomplete",
+            "Required packages (e.g. pdfplumber) not found and .venv is missing "
+            "or incomplete.\n\nRun these commands in the project folder:\n\n"
             + setup_cmds,
         )
         root.destroy()

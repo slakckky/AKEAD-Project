@@ -814,43 +814,43 @@ def print_dry_run(plan: dict) -> None:
     missing_barcode_rows = [row for row in rows if row["barcode_missing"]]
     manual_review_rows = [row for row in rows if row["action"] == "manuell pruefen"]
 
-    print(f">>> BARKODU EKSIK (elle doldurulmali): {len(missing_barcode_rows)} satir <<<")
+    print(f">>> BARCODE MISSING (fill manually): {len(missing_barcode_rows)} rows <<<")
     for row in missing_barcode_rows:
         akead = f"{row['akead_product_id']} {row['akead_article_name']}".strip()
-        print(f"  - {row['pdf_article_no']} | {row['pdf_article_name']} | aksiyon: {row['action']} | AKEAD: {akead or '-'}")
+        print(f"  - {row['pdf_article_no']} | {row['pdf_article_name']} | action: {row['action']} | AKEAD: {akead or '-'}")
     print()
 
-    print(f">>> MANUEL KONTROL GEREKLI: {len(manual_review_rows)} satir <<<")
+    print(f">>> MANUAL REVIEW REQUIRED: {len(manual_review_rows)} rows <<<")
     for row in manual_review_rows:
         akead = f"{row['akead_product_id']} {row['akead_article_name']}".strip()
-        print(f"  - {row['pdf_article_no']} | {row['pdf_article_name']} | AKEAD: {akead or '-'} | not: {row['note'] or '-'}")
+        print(f"  - {row['pdf_article_no']} | {row['pdf_article_name']} | AKEAD: {akead or '-'} | note: {row['note'] or '-'}")
     print()
 
-    print("--- Tum satirlarin detayi ---")
+    print("--- All rows detail ---")
     for evaluation in plan["evaluations"]:
         row = report_row(evaluation)
         marker = ""
         if row["action"] == "manuell pruefen":
-            marker = ">>> MANUEL KONTROL GEREKLI <<< "
+            marker = ">>> MANUAL REVIEW REQUIRED <<< "
         elif row["barcode_missing"]:
-            marker = ">>> BARKOD EKSIK <<< "
+            marker = ">>> BARCODE MISSING <<< "
         print(
             f"{marker}{row['pdf_article_no']} | {row['pdf_article_name']} | "
-            f"Match {row['match_percent']}% | Aktion: {row['action']} | "
-            f"Einheit: {row['unit'] or '-'} | Gruppe: {row['article_group'] or '-'} | "
-            f"Barcode: {'ja' if row['barcode'] else 'nein'} | "
-            f"Rechnungsteuer: {row['invoice_tax']} | Produktsteuer: {row['product_tax'] or '-'} | "
-            f"Steuerabweichung: {row['tax_difference']}"
+            f"Match {row['match_percent']}% | Action: {row['action']} | "
+            f"Unit: {row['unit'] or '-'} | Group: {row['article_group'] or '-'} | "
+            f"Barcode: {'yes' if row['barcode'] else 'no'} | "
+            f"Invoice tax: {row['invoice_tax']} | Product tax: {row['product_tax'] or '-'} | "
+            f"Tax diff: {row['tax_difference']}"
         )
         if row["akead_product_id"]:
             print(f"  AKEAD: {row['akead_product_id']} / {row['akead_article_name']}")
         if row["note"]:
-            print(f"  Hinweis: {row['note']}")
+            print(f"  Note: {row['note']}")
         if evaluation["planned_product"]:
-            print("  Geplanter produits INSERT:")
+            print("  Planned produits INSERT:")
             print("  " + render_insert("produits", evaluation["planned_product"]))
             if evaluation["planned_barcode"]:
-                print("  Geplanter codebarres INSERT nach Produktanlage")
+                print("  Planned codebarres INSERT after product creation")
     print()
     print(f"CSV-Report: {CSV_REPORT}")
     print(f"Markdown-Report: {MD_REPORT}")
