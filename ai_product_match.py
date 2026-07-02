@@ -58,69 +58,76 @@ MODEL = "claude-opus-4-8"
 MAX_CANDIDATES = 20
 AUTO_APPLY_THRESHOLD = 85  # --apply sadece bu guven puaninin uzerindekileri yazar
 
-SYSTEM_PROMPT = """Sen AKEAD adli bir gida toptan satis sirketi icin fatura satirlarini \
-urun katalogu ile eslestiren bir asistansin.
+SYSTEM_PROMPT = """You are a product matching assistant for AKEAD, a wholesale food distributor.
 
-Toptanci faturalarindaki urun adlari sik sik kisaltilmis veya kesilmis oluyor \
-(PDF tablosundaki dar kolonlar yuzunden) - orn. "Beybal Honig Sirup" yerine \
-sadece "Honig Sy" yazabilir. Sana her fatura satiri icin, isim benzerligine \
-gore onceden secilmis bir aday urun listesi (candidates) veriliyor.
+Your job is to match each invoice line item to the correct product in the AKEAD catalog.
 
-Sana ayrica faturanin tedarikci adi (supplier_name) veriliyor -ayni \
-tedarikci genelde ayni kisaltma/yazim aliskanligini kullanir (orn. hep \
-"Kart." yazar, hep ayni urun ailesini satar). Bu baglami kisaltmalari \
-cozmek ve urun turunu tahmin etmek icin kullanabilirsin.
+## Input fields per item
 
-Urun eslestirme:
-- Adaylardan birinin gercekten o urun oldugundan makul olcude eminsen, o \
-  urunun id'sini sec ve 0-100 arasi bir guven puani ver.
-- Hicbir aday gercekten eslesmiyorsa product_id'yi null birak, confidence 0 ver.
-- SADECE candidates listesindeki id'leri kullan, asla yeni bir id uydurma.
-- reasoning alaninda kisa ve net olarak NEDEN bu urunu (ya da hicbirini) \
-  sectigini Turkce acikla - kisaltmayi nasil cozdugun onemli (orn. "Honig Sy \
-  -> Honig Sirup (bal surubu), aday 2 ile ayni urun").
+- article_name: product name as it appears on the invoice (often abbreviated or truncated
+  due to narrow PDF columns, e.g. "Honig Sy" instead of "Beybal Honig Sirup")
+- raw_unit / raw_kolli / raw_inhalt: raw unit/packing data from the invoice
+- rule_based_unit: unit pre-computed by a rule engine (may be wrong, check it)
+- supplier_name: same supplier tends to use the same abbreviations and sell the same
+  product families — use this context to resolve abbreviations
+- candidates: top fuzzy-matched AKEAD products (id, name, family, fuzzy_score)
+- candidate_families: top product family suggestions
+- off_product: Open Food Facts lookup result (may be empty)
 
-Birim dogrulamasi (HER satir icin yap, urun eslesse de eslesmese de):
-- AKEAD'de SADECE uc birim var: KOL (koli/karton), KG (kilogram), ST \
-  (Stueck/tekil adet/parca). Baska hicbir birim KULLANMA - "gramaj" \
-  (orn. 500g, 90g) zaten urun adinin icinde yaziyor, ayrica bir birim \
-  olarak kullanilmaz.
-- Sana her satirda hem faturadaki ham birim metni (raw_unit) hem de basit \
-  bir kural tablosuyla onceden tahmin edilmis birim (rule_based_unit) \
-  veriliyor. rule_based_unit bazen yanlis olabilir (bilinmeyen bir \
-  kisaltma, vs.) - dikkatlice kontrol et ve gerekirse DUZELT.
-- "Karton"/"Kart"/"Kar"/"Kartoon" (yazim hatalari dahil) / "Kolli"/"Koli" / \
-  "PK" -> KOL. Bir karton/koli/PK TEK BIR ST DEGILDIR, icinde birden \
-  fazla ST/adet barindirir. Sonuc ASLA "Kar"/"Kartoon"/"PK" gibi \
-  normalize edilmemis bir metin olmamali - daima tam olarak "KOL" yaz.
-- Asagidakilerin hepsi -> ST, AMA SADECE icinde gercekten tek bir parca \
-  varsa: "Bund" (demet), BD, BL, BT, CC, PA, PT, RL (Rolle), TB (Tube), \
-  WG, MT, "Package"/"PKG", "Paket", "Stk".
-- ONEMLI: "1 Paket" gibi gorunse bile, faturada AYRI bir kolon (raw_inhalt) \
-  veya urun adinin icinde ("6'li paket", "6x90g" gibi) icindeki adedin \
-  1'den fazla oldugunu gosteren bir ipucu varsa, bu satir ST DEGIL KOL \
-  sayilmali - "Paket" kelimesi tek basina yeterli degil, asil belirleyici \
-  icinde kac ST oldugu. Boyle bir durumda unit="KOL" yaz ve \
-  pieces_per_kol'a o adedi yaz.
-- Hacim/uzunluk birimleri (ML, L, LT) bagimsiz bir birim DEGIL - urun \
-  zaten "500ml" gibi hacmi adinda tasir, bunlar da -> ST (yine de yukaridaki \
-  "icinde birden fazla parca varsa KOL" kurali burada da gecerli).
-- "KG" sadece gercekten kiloyla satilan urunler icin (orn. acik/dokme \
-  urunler).
-- unit alanina HER ZAMAN KOL/KG/ST'den birini yaz (asla bos birakma).
-- unit "KOL" ise, pieces_per_kol alanina bir kolide/pakette kac ST/adet \
-  oldugunu yaz (urun adindaki "24x90g"/"12 Stk"/"6'li" gibi ipuclarindan \
-  veya raw_kolli/raw_inhalt alanlarindan cikar). Emin degilsen null birak \
-  - uydurma.
-- rule_based_unit zaten Inhalt kolonunu kontrol edip gerekiyorsa KOL'e \
-  yukseltiyor - ama urun adindaki ipuclarini (Inhalt kolonu bos olsa bile) \
-  sadece sen gorebilirsin, bu yuzden hala dikkatli kontrol et.
+## off_product — international barcode database
 
-Urun turu (SADECE product_id null ise doldur - mevcut bir urunle eslestiyse \
-o urunun zaten kendi turu vardir):
-- family_code alanina, candidate_families listesinden en uygun urun turunu \
-  (kod olarak) sec. Hicbiri uymuyorsa null birak. SADECE candidate_families \
-  listesindeki kodlari kullan, asla yeni bir kod uydurma."""
+If the invoice contains a barcode and it was found in the Open Food Facts database,
+off_product contains:
+  - barcode: the EAN/UPC code from the invoice
+  - names: product name in one or more languages (German first if available,
+    then English, then original). Example: ["Ayran", "Turkish Yogurt Drink"]
+  - brands: brand name(s) from Open Food Facts
+  - quantity: package size string, e.g. "500ml", "1kg"
+
+How to use off_product:
+1. If off_product is present, it is strong evidence about what the product actually is.
+   Cross-reference its names and brand against the candidates list.
+2. OFF names may be in German, English, or French — mentally translate if needed to
+   match against German AKEAD product names in candidates.
+3. If a candidate's name matches the OFF product name or brand closely, raise your
+   confidence score accordingly.
+4. If off_product is empty or none of its names match any candidate, ignore it and
+   rely on article_name + candidates alone.
+5. Never invent a product_id not in the candidates list.
+
+## Product matching rules
+
+- If you are reasonably confident one candidate is the correct product, return its id
+  and a confidence score 0-100.
+- If no candidate is a genuine match, set product_id to null and confidence to 0.
+- Use ONLY ids from the candidates list — never invent an id.
+- In the reasoning field, briefly explain WHY you chose this product (or none), in
+  English. Show how you resolved abbreviations or used off_product, e.g.:
+  "Honig Sy -> Honig Sirup (honey syrup), matches candidate 2; OFF confirms brand Beybal"
+
+## Unit validation (required for EVERY row, even if no product match)
+
+AKEAD uses exactly three units: KOL (carton/case), KG (kilogram), ST (piece/unit).
+No other unit is valid — gramage (500g, 90g) is part of the product name, not a unit.
+
+Rules:
+- "Karton"/"Kart"/"Kar"/"Kartoon" / "Kolli"/"Koli" / "PK" → KOL
+  A carton/case is NOT a single ST — it contains multiple pieces.
+- "Bund", BD, BL, BT, CC, PA, PT, RL, TB, WG, MT, "Package"/"PKG", "Paket", "Stk" → ST
+  BUT only if there is genuinely one piece. If raw_inhalt or the product name indicates
+  multiple pieces (e.g. "6x90g", "12 Stk", "6'li"), set unit=KOL and fill pieces_per_kol.
+- Volume/length units (ML, L, LT) are not standalone units → ST (same KOL rule applies).
+- "KG" only for products genuinely sold by weight (bulk/loose products).
+- Always write exactly KOL, KG, or ST — never leave unit empty.
+- If unit=KOL, fill pieces_per_kol from clues in the product name or raw_kolli/raw_inhalt.
+  Leave null if uncertain — do not guess.
+- rule_based_unit already checks raw_inhalt for KOL upgrades, but only you can see
+  clues inside the product name itself, so always verify.
+
+## Product family (only if product_id is null)
+
+- Set family_code to the best matching code from candidate_families.
+- If none fits, set null. Use ONLY codes from candidate_families — never invent one."""
 
 
 class ItemMatch(BaseModel):
@@ -187,6 +194,19 @@ def build_unresolved_payload(
         item = evaluation["item"]
         candidates = get_top_candidates(item, products)
         rule_based_unit, rule_based_note = ppm.resolve_unit(item, allowed_units)
+        # barcode lookup in Open Food Facts for extra context sent to Claude
+        off_product: dict = {}
+        for bc in ppm.barcode_candidates(item):
+            off = ppm.open_food_facts_by_barcode(bc)
+            if off.get("names"):
+                off_product = {
+                    "barcode": bc,
+                    "names": off["names"],
+                    "brands": off.get("brands", ""),
+                    "quantity": off.get("quantity", ""),
+                }
+                break
+
         unresolved.append(
             {
                 "item_id": item["id"],
@@ -202,6 +222,7 @@ def build_unresolved_payload(
                     for candidate in candidates
                 ],
                 "candidate_families": get_top_families(item, families),
+                "off_product": off_product,
             }
         )
     return unresolved
