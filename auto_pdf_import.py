@@ -325,13 +325,30 @@ def parse_date(value: str) -> str | None:
 
 
 def detect_supplier(lines: list[str], text: str) -> str:
-    ignore = re.compile(r"^(nr\.?|artikel|beschreibung|menge|einheit|preis|betrag)$|rechnung|beleg|datum|kund|liefer|seite|tel\.?|fax|email|iban|ust|uid", re.IGNORECASE)
+    ignore = re.compile(
+        r"^(nr\.?|artikel|beschreibung|menge|einheit|preis|betrag)$"
+        r"|rechnung|beleg|datum|kund|liefer|seite|tel\.?|fax|email|iban|ust|uid"
+        r"|verkauf|verkaeufer|verk\.",
+        re.IGNORECASE,
+    )
+    company_suffix = re.compile(r"\b(GmbH|e\.?K\.?|KG|AG|Ltd|Inc|Corp|OHG|GbR|S\.A\.)\b", re.IGNORECASE)
+
+    # Pass 1: prefer lines that contain a legal company suffix (GmbH, KG, e.K. ...)
+    for line in lines[:30]:
+        clean = " ".join(line.split()).strip(":- ")
+        if len(clean) < 3 or ignore.search(clean):
+            continue
+        if company_suffix.search(clean):
+            return clean[:255]
+
+    # Pass 2: fall back to first non-ignored line with letters
     for line in lines[:20]:
         clean = " ".join(line.split()).strip(":- ")
         if len(clean) < 3 or ignore.search(clean):
             continue
         if re.search(r"[A-Za-zÄÖÜäöüß]", clean):
             return clean[:255]
+
     return first_match([r"Lieferant\s*:?\s*(.+)"], text)[:255]
 
 

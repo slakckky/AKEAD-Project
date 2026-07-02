@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from difflib import SequenceMatcher
 import re
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -214,8 +215,9 @@ def staging_items(cursor, document_id: int) -> list[dict]:
 def resolve_vendor_id(cursor, supplier_name: str) -> int:
     supplier = (supplier_name or "").strip()
     if not supplier:
-        raise ValueError("id_vendor kann nicht gesetzt werden: supplier_name fehlt im Staging-Dokument.")
+        raise ValueError("id_vendor cannot be set: supplier_name missing from staging document.")
 
+    # Exact match
     rows = fetch_all(
         cursor,
         """
@@ -229,6 +231,7 @@ def resolve_vendor_id(cursor, supplier_name: str) -> int:
     if len(rows) == 1:
         return int(rows[0]["id"])
 
+    # LIKE match
     rows = fetch_all(
         cursor,
         """
@@ -242,17 +245,46 @@ def resolve_vendor_id(cursor, supplier_name: str) -> int:
     if len(rows) == 1:
         return int(rows[0]["id"])
 
-    raise ValueError(
-        "id_vendor kann nicht sicher gesetzt werden: Lieferant `{}` wurde nicht eindeutig in vendors gefunden.".format(
-            supplier
+    # Fuzzy match against all vendors
+    all_vendors = fetch_all(cursor, "SELECT id, code, nom FROM vendors ORDER BY nom")
+    best_score = 0.0
+    best_vendor: dict | None = None
+    norm = supplier.lower()
+    for v in all_vendors:
+        nom = (v.get("nom") or "").lower()
+        code = (v.get("code") or "").lower()
+        score = max(
+            SequenceMatcher(None, norm, nom).ratio(),
+            SequenceMatcher(None, norm, code).ratio(),
         )
+        if score > best_score:
+            best_score = score
+            best_vendor = v
+
+    if best_vendor and best_score >= 0.55:
+        print(f"Warning: vendor '{supplier}' not found exactly — using closest match: "
+              f"'{best_vendor['nom']}' (score {best_score:.0%})")
+        return int(best_vendor["id"])
+
+    vendor_list = "; ".join(
+        f"{v['nom']} [{v['code']}]" for v in all_vendors[:15]
+    )
+    raise ValueError(
+        f"Vendor '{supplier}' not found in vendors table.\n"
+        f"Available vendors: {vendor_list or '(table empty)'}\n"
+        f"Fix: correct the supplier name in the PDF or add '{supplier}' to the vendors table."
     )
 
 
 def latest_invoice_template(cursor) -> dict:
     invoice = fetch_one(cursor, "SELECT * FROM invoices ORDER BY id DESC LIMIT 1")
     if not invoice:
-        raise ValueError("Keine manuelle AKEAD-Testrechnung in invoices gefunden.")
+        raise ValueError(
+            "No invoice found in the AKEAD 'invoices' table.\n"
+            "Step 5 uses the most recent invoice as a field template (company defaults, "
+            "currency settings, etc.).\n"
+            "Fix: create at least one invoice manually in AKEAD first, then retry."
+        )
     return invoice
 
 
