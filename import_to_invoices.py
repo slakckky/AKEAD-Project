@@ -119,6 +119,37 @@ def grouped_tax_total(detail_rows: list[dict]) -> Decimal:
     return sum((money(net * rate / Decimal("100")) for rate, net in buckets.items()), Decimal("0"))
 
 
+def build_tax_rows(detail_rows: list[dict], invoice_id: int) -> list[dict]:
+    """Group detail rows by (id_taxclass, tax_rate) into invoices_tax summaries.
+
+    README 9.3 / 15: after writing invoices_details, tax base and amount must
+    be grouped per tax class into invoices_tax. Unique key is
+    (id_doc, id_taxclass, id_tax, tax_rate, withholding_num, withholding_den).
+    """
+    buckets: dict[tuple[int, Decimal], Decimal] = {}
+    for row in detail_rows:
+        rate = parse_decimal_safe(row.get("taux_tva"), "invoices_details.taux_tva")
+        taxclass = int(row.get("id_taxclass") or 0)
+        base = parse_decimal_safe(row.get("tot_ht_rem"), "invoices_details.tot_ht_rem")
+        buckets[(taxclass, rate)] = buckets.get((taxclass, rate), Decimal("0")) + base
+    tax_rows = []
+    for (taxclass, rate), base in buckets.items():
+        amount = money(base * rate / Decimal("100"))
+        tax_rows.append(
+            {
+                "id_doc": invoice_id,
+                "id_tax": 1,  # MwSt (taxes.id = 1)
+                "id_taxclass": taxclass,
+                "tax_rate": rate,
+                "tax_base": base,
+                "tax_amount": amount,
+                "withholding_num": 0,
+                "withholding_den": 0,
+            }
+        )
+    return tax_rows
+
+
 def load_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -439,15 +470,24 @@ def load_tax_classes(cursor) -> list[tuple[int, Decimal, int]]:
     skipped so superseded rates (e.g. old 10% for class 8) are ignored.
     """
     today = date.today().isoformat()
-    for table in ("tax", "tax_rates"):
+    for table in ("tax_rates", "tax"):
         try:
             rows = fetch_all(
                 cursor,
                 f"SELECT id_taxclass, tax_rate, tax_order, "
-                f"date_validity_start, date_validity_finish FROM `{table}`",
+                f"date_validity_start, date_validity_finish FROM `{table}` "
+                f"WHERE id_taxregime = 1",
             )
         except Exception:
-            continue
+            # Retry without the regime filter if the column is absent
+            try:
+                rows = fetch_all(
+                    cursor,
+                    f"SELECT id_taxclass, tax_rate, tax_order, "
+                    f"date_validity_start, date_validity_finish FROM `{table}`",
+                )
+            except Exception:
+                continue
         result: list[tuple[int, Decimal, int]] = []
         for r in rows:
             start = str(r.get("date_validity_start") or "").strip()[:10]
@@ -737,6 +777,12 @@ def execute_import(connection, plan: dict) -> int:
             detail_row = dict(row)
             detail_row["id_doc"] = invoice_id
             insert_row(cursor, "invoices_details", detail_row)
+        # README 9.3: write per-tax-class summaries into invoices_tax
+        for tax_row in build_tax_rows(plan["detail_rows"], invoice_id):
+            try:
+                insert_row(cursor, "invoices_tax", tax_row)
+            except Exception as exc:
+                print(f"invoices_tax insert skipped: {exc}")
     connection.commit()
     return invoice_id
 
