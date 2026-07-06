@@ -494,8 +494,6 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
                 "trf_exch_rate_div": Decimal("1"),
                 "prix_u_ht": piece_price,
                 "qte_unit_prd": qte_unit_prd,
-                # contenu = pieces per package (inhalt); minimum 1
-                "contenu": qte_unit_prd if qte_unit_prd > 0 else Decimal("1"),
                 "taux_tva": tax_rate,
                 "prix_revt": Decimal("0"),
                 "cost_price_curr": Decimal("0"),
@@ -507,9 +505,11 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
                 "dat_upd": now.replace(microsecond=0),
             }
         )
-        # Write AKEAD product ref code if the column exists in invoices_details
+        # Write only if column exists in invoices_details (safe for any schema)
         if "ref_prd" in row:
             row["ref_prd"] = product_ref
+        if "contenu" in row:
+            row["contenu"] = qte_unit_prd if qte_unit_prd > 0 else Decimal("1")
         rows.append(row)
     return rows
 
