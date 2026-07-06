@@ -371,16 +371,37 @@ def parse_date(value: str) -> str | None:
 
 def _trim_to_company_name(raw: str) -> str:
     """Strip address/street parts after the company name.
-    'Demka GmbH / Lembacher Str. 28 / 68229 Mannheim' -> 'Demka GmbH'
+
+    Examples:
+      'Demka GmbH / Lembacher Str. 28' -> 'Demka GmbH'
+      'Demka GmbH, Musterstr. 1, 12345 Stadt' -> 'Demka GmbH'
+      'Demka GmbH 68229 Mannheim' -> 'Demka GmbH'
+      'Aymarkt GmbH Mariahilfer Str. 1 1060 Wien' -> 'Aymarkt GmbH'
     """
-    # Split on ' / ', ', ', ' - ' that precede address-like tokens
-    parts = re.split(r"\s*/\s*|\s+[-–]\s+", raw)
-    # Take the first part that looks like a company name (has letters, not just numbers)
+    street_cut = re.compile(
+        # compound: "Industriestraße", "Industriestr.", "Hauptgasse" etc.
+        r"\s+\S+(?:str\.|straße|strasse|gasse|weg|platz|allee|ring|damm|chaussee)"
+        # spaced: "Mariahilfer Str.", "Muster Gasse" etc.
+        r"|\s+\w+\s+(?:str\.|strasse|straße|gasse|weg|platz|allee|ring|damm|chaussee)"
+        r"|\s+(?:str\.|strasse|straße|gasse|weg|platz|allee|ring|damm|chaussee)"
+        r"|\s+\d{4,5}\b",   # postal code (4-5 digits)
+        re.IGNORECASE,
+    )
+
+    # First split on explicit separators (slash, comma, em-dash)
+    parts = re.split(r"\s*/\s*|,\s*|\s+[-–]\s+", raw)
     for part in parts:
         part = part.strip()
-        if part and re.search(r"[A-Za-zÄÖÜäöüß]", part):
-            return part[:255]
-    return raw[:255]
+        if not part or not re.search(r"[A-Za-zÄÖÜäöüß]", part):
+            continue
+        # Within this part, cut at the first street/postal-code indicator
+        m = street_cut.search(part)
+        if m:
+            candidate = part[: m.start()].strip()
+            if re.search(r"[A-Za-zÄÖÜäöüß]", candidate):
+                return candidate[:255]
+        return part[:255]
+    return raw.split(",")[0].strip()[:255]
 
 
 def _customer_block_start(lines: list[str]) -> int:
