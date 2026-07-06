@@ -343,17 +343,28 @@ def first_match(patterns: list[str], text: str, flags: int = re.IGNORECASE) -> s
 
 def detect_document_no(text: str, source_file: str) -> str:
     patterns = [
+        # Specific known formats (highest confidence)
         r"\b(R-\d{2}-\d{6})\b",
         r"\b(RE\d{2}-\d{7})\b",
         r"\b(RE-[A-Z0-9][A-Z0-9._/-]+)\b",
         r"\b(RG-[A-Z0-9][A-Z0-9._/-]+)\b",
-        r"Rechnung\s*(?:Nr\.?|Nummer|No\.?)\s*:?\s*([A-Z0-9][A-Z0-9._/-]+)",
-        r"Rechnungsnr\.?\s*:?\s*([A-Z0-9][A-Z0-9._/-]+)",
+        # Rechnung / Rechnungs-Nr with alphanumeric or pure numeric value
+        r"Rechnungs(?:nummer|nr)\.?\s*:?\s*([A-Z0-9][A-Z0-9._/ -]{1,30})",
+        r"Rechnung\s*(?:Nr\.?|Nummer|No\.?)\s*:?\s*([A-Z0-9][A-Z0-9._/ -]{1,30})",
+        r"Rechnung\s*(?:Nr\.?|Nummer|No\.?)\s*:?\s*(\d+[A-Z0-9._/-]*)",
+        r"Rechnung\s*:?\s*(?:Nr\.?|#)?\s*(\d{3,}[A-Z0-9._/-]*)",
+        # Lieferschein / Lieferung number
+        r"Lieferschein\s*(?:Nr\.?|Nummer|No\.?)?\s*:?\s*([A-Z0-9]\S{1,20})",
+        r"Lieferschein\s*(?:Nr\.?|Nummer|No\.?)?\s*:?\s*(\d+[A-Z0-9._/-]*)",
+        r"Lieferung\s*(?:Nr\.?|Nummer|No\.?)?\s*:?\s*([A-Z0-9]\S{1,20})",
+        r"Lieferung\s*(?:Nr\.?|Nummer|No\.?)?\s*:?\s*(\d+[A-Z0-9._/-]*)",
+        # Beleg / generic
         r"Beleg\s*(?:Nr\.?|Nummer|No\.?)\s*:?\s*([A-Z0-9][A-Z0-9._/-]+)",
+        r"Beleg\s*(?:Nr\.?|Nummer|No\.?)\s*:?\s*(\d+[A-Z0-9._/-]*)",
     ]
     value = first_match(patterns, text)
     if value:
-        return value[:50]
+        return value.strip()[:50]
     digest = hashlib.sha1((source_file + text[:1000]).encode("utf-8", errors="ignore")).hexdigest()[:12]
     return f"PDF-{digest}"
 
