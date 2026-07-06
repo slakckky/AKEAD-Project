@@ -926,7 +926,18 @@ def execute_plan(connection, plan: dict) -> None:
             if action == "uebernehmen" and product:
                 product_id = int(product["id"])
             elif action == "neu anlegen" and evaluation["planned_product"]:
-                existing = fetch_one(cursor, "SELECT id FROM produits WHERE ref_prd = %s LIMIT 1", (item["article_no"],))
+                planned_ref = evaluation["planned_product"].get("ref_prd", "")
+                article_no = str(item.get("article_no") or "").strip()
+                existing = fetch_one(
+                    cursor,
+                    """
+                    SELECT id FROM produits
+                    WHERE ref_prd = %s
+                       OR (lib_tech LIKE %s AND %s <> '')
+                    LIMIT 1
+                    """,
+                    (planned_ref, f"Lief-Art-Nr: {article_no}%", article_no),
+                )
                 if existing:
                     product_id = int(existing["id"])
                 else:
