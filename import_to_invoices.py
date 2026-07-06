@@ -273,22 +273,30 @@ def _clients_code_col(cursor) -> str | None:
     return None
 
 
-def _next_client_code(cursor, code_col: str, supplier: str) -> str:
-    """Build a unique client code from the supplier name."""
-    base = re.sub(r"[^A-Za-z0-9]", "", supplier)[:8].upper() or "IMP"
-    candidate = base
-    suffix = 1
-    while True:
-        try:
-            exists = fetch_one(
-                cursor, f"SELECT id FROM clients WHERE `{code_col}` = %s LIMIT 1", (candidate,)
-            )
-        except Exception:
-            return base
-        if not exists:
-            return candidate
-        suffix += 1
-        candidate = f"{base[:6]}{suffix}"[:20]
+def _next_client_code(cursor, code_col: str) -> str:
+    """Next sequential zero-padded client code, matching AKEAD style (0001, 0002...)."""
+    try:
+        rows = fetch_all(cursor, f"SELECT `{code_col}` AS c FROM clients")
+    except Exception:
+        return "0001"
+    mx = 0
+    for r in rows:
+        s = str(r.get("c") or "").strip()
+        if s.isdigit():
+            mx = max(mx, int(s))
+    return f"{mx + 1:04d}"
+
+
+def _fill_missing_client_code(cursor, client_id: int) -> None:
+    """If an existing client has an empty code, assign the next sequential one."""
+    code_col = _clients_code_col(cursor)
+    if not code_col:
+        return
+    row = fetch_one(cursor, f"SELECT `{code_col}` AS c FROM clients WHERE id = %s", (client_id,))
+    if row is not None and not str(row.get("c") or "").strip():
+        code = _next_client_code(cursor, code_col)
+        cursor.execute(f"UPDATE clients SET `{code_col}` = %s WHERE id = %s", (code, client_id))
+        print(f"Filled missing {code_col}={code} for client id={client_id}")
 
 
 def _clean_supplier_name(supplier: str) -> str:
@@ -341,20 +349,22 @@ def _fuzzy_clients(cursor, name_col: str, supplier: str) -> tuple[int | None, fl
 
 
 def _auto_create_supplier(cursor, name_col: str, supplier: str) -> int:
-    """Create the supplier in clients with name and a generated code."""
-    cols = [name_col]
-    vals = [supplier[:100]]
+    """Create the supplier in clients with name, sequential code and supplier flags."""
+    row = {name_col: supplier[:100]}
     code_col = _clients_code_col(cursor)
     code = ""
     if code_col:
-        code = _next_client_code(cursor, code_col, supplier)
-        cols.append(code_col)
-        vals.append(code)
-    col_sql = ", ".join(f"`{c}`" for c in cols)
-    placeholders = ", ".join(["%s"] * len(cols))
-    cursor.execute(f"INSERT INTO clients ({col_sql}) VALUES ({placeholders})", tuple(vals))
+        code = _next_client_code(cursor, code_col)
+        row[code_col] = code
+    # Supplier/company flags, only for columns that actually exist
+    for col, val in (("typ_cus_sup", 2), ("b_soc", 2), ("b_actif", 1)):
+        if column_exists(cursor, "clients", col):
+            row[col] = val
+    col_sql = ", ".join(f"`{c}`" for c in row)
+    placeholders = ", ".join(["%s"] * len(row))
+    cursor.execute(f"INSERT INTO clients ({col_sql}) VALUES ({placeholders})", tuple(row.values()))
     new_id = int(cursor.lastrowid)
-    print(f"Auto-created supplier '{supplier}' in clients (id={new_id}, code={code or '-'})")
+    print(f"Auto-created supplier '{supplier}' in clients (id={new_id}, {code_col or 'code'}={code or '-'})")
     return new_id
 
 
@@ -371,11 +381,13 @@ def resolve_vendor_id(cursor, supplier_name: str) -> int:
 
     found = _search_clients(cursor, name_col, supplier)
     if found is not None:
+        _fill_missing_client_code(cursor, found)  # backfill code if it was left empty
         return found
 
     best_id, best_score = _fuzzy_clients(cursor, name_col, supplier)
     if best_id is not None and best_score >= 0.7:
         print(f"Supplier '{supplier}' not found exactly — using closest client (score {best_score:.0%})")
+        _fill_missing_client_code(cursor, best_id)
         return best_id
 
     print(f"Supplier '{supplier}' not found in clients — creating automatically.")
