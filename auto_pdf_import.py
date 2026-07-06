@@ -340,35 +340,27 @@ def _trim_to_company_name(raw: str) -> str:
     return raw[:255]
 
 
-def _buyer_block_lines(text: str) -> set[str]:
-    """Return lines that belong to the buyer/recipient address block."""
-    buyer_lines: set[str] = set()
-    in_block = False
-    for line in text.splitlines():
-        stripped = " ".join(line.split())
+def _customer_block_start(lines: list[str]) -> int:
+    """Return the line index where the customer/recipient block begins, or len(lines) if not found.
+
+    Invoices typically have the supplier at the top. The customer block starts
+    when an explicit recipient label appears (An:, Rechnungsempfaenger, etc.).
+    Without such a label we assume the whole visible header belongs to the supplier.
+    """
+    for i, line in enumerate(lines[:60]):
         if re.search(
-            r"\b(Rechnungsempf[aä]nger|Empf[aä]nger|Kunde|Käufer|K[aä]ufer|An:|Faktura\s+[Aa]n|Bill\s+to|Ship\s+to)\b",
-            stripped, re.IGNORECASE,
+            r"^\s*(An\s*:|Rechnungsempf[aä]nger|Empf[aä]nger\s*:|K[aä]ufer\s*:|Bill\s+to|Ship\s+to)",
+            line, re.IGNORECASE,
         ):
-            in_block = True
-            buyer_lines.add(stripped)
-            continue
-        if in_block:
-            if not stripped:
-                in_block = False
-            else:
-                buyer_lines.add(stripped)
-    return buyer_lines
+            return i
+    return len(lines)
 
 
 def detect_supplier(lines: list[str], text: str) -> str:
-    # Priority 0: explicit supplier label in the document
-    explicit = first_match(
-        [r"Lieferant\s*:?\s*(.+)", r"Absender\s*:?\s*(.+)", r"Von\s*:\s*(.+)"],
-        text,
-    )
-    if explicit and len(explicit.strip()) > 2:
-        return _trim_to_company_name(explicit.strip())
+    # The supplier address is always at the TOP of the invoice (before the customer block).
+    # Scan only the lines that precede the first explicit customer/recipient label.
+    customer_start = _customer_block_start(lines)
+    supplier_lines = lines[:min(customer_start, 30)]
 
     ignore = re.compile(
         r"^(nr\.?|artikel|beschreibung|menge|einheit|preis|betrag)$"
@@ -378,31 +370,18 @@ def detect_supplier(lines: list[str], text: str) -> str:
     )
     company_suffix = re.compile(r"\b(GmbH|e\.?K\.?|KG|AG|Ltd|Inc|Corp|OHG|GbR|S\.A\.)\b", re.IGNORECASE)
 
-    # Build buyer-block set so we don't mistake the customer block for the supplier
-    buyer_lines = _buyer_block_lines(text)
-
-    def is_buyer_line(clean: str) -> bool:
-        return any(
-            SequenceMatcher(None, clean.lower(), b.lower()).ratio() > 0.85
-            for b in buyer_lines if len(b) > 3
-        )
-
-    # Pass 1: prefer lines with a legal company suffix, outside the buyer block
-    for line in lines[:30]:
+    # Pass 1: first line with a legal company suffix in the supplier block
+    for line in supplier_lines:
         clean = " ".join(line.split()).strip(":- ")
         if len(clean) < 3 or ignore.search(clean):
-            continue
-        if is_buyer_line(clean):
             continue
         if company_suffix.search(clean):
             return _trim_to_company_name(clean)
 
-    # Pass 2: fall back to first non-ignored, non-buyer line with letters
-    for line in lines[:20]:
+    # Pass 2: first non-ignored line with letters in the supplier block
+    for line in supplier_lines:
         clean = " ".join(line.split()).strip(":- ")
         if len(clean) < 3 or ignore.search(clean):
-            continue
-        if is_buyer_line(clean):
             continue
         if re.search(r"[A-Za-zÄÖÜäöüß]", clean):
             return _trim_to_company_name(clean)
