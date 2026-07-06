@@ -777,10 +777,13 @@ def report_row(evaluation: dict) -> dict:
 def write_reports(plan: dict) -> None:
     rows = [report_row(evaluation) for evaluation in plan["evaluations"]]
     fieldnames = list(rows[0].keys()) if rows else []
-    with CSV_REPORT.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter=";")
-        writer.writeheader()
-        writer.writerows(rows)
+    try:
+        with CSV_REPORT.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter=";")
+            writer.writeheader()
+            writer.writerows(rows)
+    except PermissionError:
+        print(f"Warning: could not write {CSV_REPORT.name} — close it in Excel first.")
 
     counts = {}
     for row in rows:
@@ -864,7 +867,10 @@ def write_reports(plan: dict) -> None:
             f"{row['article_group']} {row['article_group_name']} | {row['barcode']} | "
             f"{row['invoice_tax']} | {row['product_tax']} | {row['tax_difference']} | {row['note']} |"
         )
-    MD_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        MD_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except PermissionError:
+        print(f"Warning: could not write {MD_REPORT.name} — close it first.")
 
 
 def print_dry_run(plan: dict) -> None:
