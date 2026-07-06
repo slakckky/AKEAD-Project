@@ -212,68 +212,80 @@ def staging_items(cursor, document_id: int) -> list[dict]:
     )
 
 
+def _search_supplier_table(cursor, table: str, supplier: str) -> int | None:
+    """Search for supplier in given table; return id or None."""
+    try:
+        rows = fetch_all(
+            cursor,
+            f"SELECT id, code, nom FROM `{table}` WHERE LOWER(nom) = LOWER(%s) OR LOWER(code) = LOWER(%s)",
+            (supplier, supplier),
+        )
+        if rows:
+            return int(rows[0]["id"])
+        rows = fetch_all(
+            cursor,
+            f"SELECT id, code, nom FROM `{table}` WHERE LOWER(nom) LIKE LOWER(%s) OR LOWER(%s) LIKE CONCAT('%%', LOWER(nom), '%%')",
+            (f"%{supplier}%", supplier),
+        )
+        if rows:
+            return int(rows[0]["id"])
+    except Exception:
+        pass
+    return None
+
+
+def _fuzzy_supplier_table(cursor, table: str, supplier: str) -> tuple[int | None, float]:
+    try:
+        all_rows = fetch_all(cursor, f"SELECT id, code, nom FROM `{table}` ORDER BY nom")
+    except Exception:
+        return None, 0.0
+    best_score = 0.0
+    best_id: int | None = None
+    norm = supplier.lower()
+    for v in all_rows:
+        nom = (v.get("nom") or "").lower()
+        code = (v.get("code") or "").lower()
+        score = max(SequenceMatcher(None, norm, nom).ratio(), SequenceMatcher(None, norm, code).ratio())
+        if score > best_score:
+            best_score = score
+            best_id = int(v["id"])
+    return best_id, best_score
+
+
+def _auto_create_supplier(cursor, supplier: str) -> int:
+    code = re.sub(r"[^A-Za-z0-9]", "", supplier)[:10].upper() or "IMP"
+    for table in ("clients", "vendors"):
+        try:
+            cursor.execute(f"INSERT INTO `{table}` (code, nom) VALUES (%s, %s)", (code, supplier[:100]))
+            new_id = int(cursor.lastrowid)
+            print(f"Auto-created supplier '{supplier}' in {table} (id={new_id})")
+            return new_id
+        except Exception as exc:
+            print(f"Could not auto-create in {table}: {exc}")
+    raise ValueError(f"Vendor '{supplier}' not found and auto-create failed.")
+
+
 def resolve_vendor_id(cursor, supplier_name: str) -> int:
     supplier = (supplier_name or "").strip()
     if not supplier:
         raise ValueError("id_vendor cannot be set: supplier_name missing from staging document.")
 
-    # Exact match
-    rows = fetch_all(
-        cursor,
-        """
-        SELECT id, code, nom
-        FROM vendors
-        WHERE LOWER(nom) = LOWER(%s)
-           OR LOWER(code) = LOWER(%s)
-        """,
-        (supplier, supplier),
-    )
-    if len(rows) == 1:
-        return int(rows[0]["id"])
+    # Exact / LIKE match — try clients first (AKEAD may store suppliers there), then vendors
+    for table in ("clients", "vendors"):
+        found = _search_supplier_table(cursor, table, supplier)
+        if found is not None:
+            return found
 
-    # LIKE match
-    rows = fetch_all(
-        cursor,
-        """
-        SELECT id, code, nom
-        FROM vendors
-        WHERE LOWER(nom) LIKE LOWER(%s)
-           OR LOWER(%s) LIKE CONCAT('%%', LOWER(nom), '%%')
-        """,
-        (f"%{supplier}%", supplier),
-    )
-    if len(rows) == 1:
-        return int(rows[0]["id"])
+    # Fuzzy match
+    for table in ("clients", "vendors"):
+        best_id, best_score = _fuzzy_supplier_table(cursor, table, supplier)
+        if best_id is not None and best_score >= 0.55:
+            print(f"Vendor '{supplier}' not found exactly — using closest match in {table} (score {best_score:.0%})")
+            return best_id
 
-    # Fuzzy match against all vendors
-    all_vendors = fetch_all(cursor, "SELECT id, code, nom FROM vendors ORDER BY nom")
-    best_score = 0.0
-    best_vendor: dict | None = None
-    norm = supplier.lower()
-    for v in all_vendors:
-        nom = (v.get("nom") or "").lower()
-        code = (v.get("code") or "").lower()
-        score = max(
-            SequenceMatcher(None, norm, nom).ratio(),
-            SequenceMatcher(None, norm, code).ratio(),
-        )
-        if score > best_score:
-            best_score = score
-            best_vendor = v
-
-    if best_vendor and best_score >= 0.55:
-        print(f"Warning: vendor '{supplier}' not found exactly — using closest match: "
-              f"'{best_vendor['nom']}' (score {best_score:.0%})")
-        return int(best_vendor["id"])
-
-    vendor_list = "; ".join(
-        f"{v['nom']} [{v['code']}]" for v in all_vendors[:15]
-    )
-    raise ValueError(
-        f"Vendor '{supplier}' not found in vendors table.\n"
-        f"Available vendors: {vendor_list or '(table empty)'}\n"
-        f"Fix: correct the supplier name in the PDF or add '{supplier}' to the vendors table."
-    )
+    # Auto-create
+    print(f"Vendor '{supplier}' not found — creating automatically.")
+    return _auto_create_supplier(cursor, supplier)
 
 
 def latest_invoice_template(cursor) -> dict:
@@ -345,33 +357,26 @@ def product_map(cursor, items: list[dict]) -> dict[str, int]:
     has_product_id = column_exists(cursor, "pdf_import_items", "product_id")
     for item in items:
         article_no = item["article_no"]
+
+        # 1. Use product_id set by Step 4 matching (includes newly created IMP products)
         if has_product_id and int(item.get("product_id") or 0) > 0:
-            product = fetch_one(
-                cursor,
-                """
-                SELECT id, ref_prd, lib_prd, cod_fam_prd_path, usr_cre
-                FROM produits
-                WHERE id = %s
-                LIMIT 1
-                """,
-                (int(item["product_id"]),),
-            )
-            if product and product["usr_cre"] != "PDF_IMPORT" and product["cod_fam_prd_path"] != "P01":
+            product = fetch_one(cursor, "SELECT id FROM produits WHERE id = %s LIMIT 1", (int(item["product_id"]),))
+            if product:
                 result[article_no] = int(product["id"])
                 continue
 
-        rows = fetch_all(
-            cursor,
-            """
-            SELECT id
-            FROM produits
-            WHERE ref_prd = %s
-              AND usr_cre <> 'PDF_IMPORT'
-              AND cod_fam_prd_path <> 'P01'
-            """,
-            (article_no,),
-        )
-        result[article_no] = int(rows[0]["id"]) if len(rows) == 1 else 0
+        # 2. Look up by supplier article number stored in lib_tech ("Lief-Art-Nr: <no>")
+        if article_no:
+            rows = fetch_all(
+                cursor,
+                "SELECT id FROM produits WHERE lib_tech LIKE %s LIMIT 1",
+                (f"Lief-Art-Nr: {article_no}%",),
+            )
+            if rows:
+                result[article_no] = int(rows[0]["id"])
+                continue
+
+        result[article_no] = 0
     return result
 
 
@@ -379,6 +384,10 @@ def build_invoice_row(template: dict, document: dict, next_sy_uk: int, vendor_id
     now = datetime.now()
     today = now.date()
     row = {key: value for key, value in template.items() if key != "id"}
+    # Regenerate any UUID columns copied from template to avoid UNIQUE constraint violations
+    for key in list(row.keys()):
+        if "uuid" in key.lower():
+            row[key] = uuid.uuid4().hex
     row.update(
         {
             "id_org": 1,
@@ -428,9 +437,14 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
         kolli = parse_decimal_safe(item.get("kolli"), "pdf_import_items.kolli")
         quantity = parse_decimal_safe(item.get("quantity"), "pdf_import_items.quantity")
         unit_price = parse_decimal_safe(item.get("unit_price"), "pdf_import_items.unit_price")
-        tax_rate = parse_decimal_safe(item.get("tax_rate"), "pdf_import_items.tax_rate")
+        # Foreign supplier invoices carry no Austrian VAT; force 0 regardless of staging value
+        tax_rate = Decimal("0")
         line_total = parse_decimal_safe(item.get("line_total"), "pdf_import_items.line_total")
         row = {key: value for key, value in template.items() if key != "id"}
+        # Regenerate any UUID columns copied from template to avoid UNIQUE constraint violations
+        for key in list(row.keys()):
+            if "uuid" in key.lower():
+                row[key] = uuid.uuid4().hex
         row.update(
             {
                 "id_doc": None,
