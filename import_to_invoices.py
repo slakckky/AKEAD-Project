@@ -252,10 +252,24 @@ def _clients_name_col(cursor) -> str:
 
 
 def _clients_code_col(cursor) -> str | None:
-    """Find the client reference/code column in the clients table."""
-    for col in ("ref_clt", "code_clt", "num_clt", "ref", "code_client", "code"):
+    """Find the client reference/code column in the clients table.
+
+    First try known names, then scan all columns for a varchar whose name
+    looks like a code/reference (ref/code/num) so we adapt to any schema.
+    """
+    for col in ("cod_clt", "ref_clt", "code_clt", "num_clt", "ref", "code_client", "code", "ref_client", "no_clt"):
         if column_exists(cursor, "clients", col):
             return col
+    try:
+        cols = fetch_all(cursor, "SHOW COLUMNS FROM clients")
+    except Exception:
+        return None
+    for c in cols:
+        name = str(c.get("Field") or "")
+        ctype = str(c.get("Type") or "").lower()
+        if "char" in ctype and re.search(r"(^|_)(cod|ref|code|num)", name, re.IGNORECASE):
+            print(f"clients code column detected: {name}")
+            return name
     return None
 
 
