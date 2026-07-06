@@ -251,6 +251,32 @@ def _clients_name_col(cursor) -> str:
     return "nom"
 
 
+def _clients_code_col(cursor) -> str | None:
+    """Find the client reference/code column in the clients table."""
+    for col in ("ref_clt", "code_clt", "num_clt", "ref", "code_client", "code"):
+        if column_exists(cursor, "clients", col):
+            return col
+    return None
+
+
+def _next_client_code(cursor, code_col: str, supplier: str) -> str:
+    """Build a unique client code from the supplier name."""
+    base = re.sub(r"[^A-Za-z0-9]", "", supplier)[:8].upper() or "IMP"
+    candidate = base
+    suffix = 1
+    while True:
+        try:
+            exists = fetch_one(
+                cursor, f"SELECT id FROM clients WHERE `{code_col}` = %s LIMIT 1", (candidate,)
+            )
+        except Exception:
+            return base
+        if not exists:
+            return candidate
+        suffix += 1
+        candidate = f"{base[:6]}{suffix}"[:20]
+
+
 def _clean_supplier_name(supplier: str) -> str:
     """Cut trailing label/address words that leak into the supplier name."""
     supplier = " ".join((supplier or "").split())
@@ -301,10 +327,20 @@ def _fuzzy_clients(cursor, name_col: str, supplier: str) -> tuple[int | None, fl
 
 
 def _auto_create_supplier(cursor, name_col: str, supplier: str) -> int:
-    """Create the supplier in clients. Minimal insert relies on column defaults."""
-    cursor.execute(f"INSERT INTO clients (`{name_col}`) VALUES (%s)", (supplier[:100],))
+    """Create the supplier in clients with name and a generated code."""
+    cols = [name_col]
+    vals = [supplier[:100]]
+    code_col = _clients_code_col(cursor)
+    code = ""
+    if code_col:
+        code = _next_client_code(cursor, code_col, supplier)
+        cols.append(code_col)
+        vals.append(code)
+    col_sql = ", ".join(f"`{c}`" for c in cols)
+    placeholders = ", ".join(["%s"] * len(cols))
+    cursor.execute(f"INSERT INTO clients ({col_sql}) VALUES ({placeholders})", tuple(vals))
     new_id = int(cursor.lastrowid)
-    print(f"Auto-created supplier '{supplier}' in clients (id={new_id})")
+    print(f"Auto-created supplier '{supplier}' in clients (id={new_id}, code={code or '-'})")
     return new_id
 
 
