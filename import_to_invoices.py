@@ -492,15 +492,35 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
 
         kolli = parse_decimal_safe(item.get("kolli"), "pdf_import_items.kolli")
         quantity = parse_decimal_safe(item.get("quantity"), "pdf_import_items.quantity")
-        # inhalt = pieces per case (VPE); used to convert case price → piece price
         inhalt = parse_decimal_safe(item.get("inhalt"), "pdf_import_items.inhalt")
         unit_price_raw = parse_decimal_safe(item.get("unit_price"), "pdf_import_items.unit_price")
+        line_total = parse_decimal_safe(item.get("line_total"), "pdf_import_items.line_total")
+        staged_unit = (item.get("unit") or "").upper()
 
-        qte_unit_prd = inhalt if inhalt > 0 else quantity
+        # README 5.3: final AKEAD unit must be a base unit (ST / KG), not KOL.
+        # A KOL row (cases) is expanded to total individual pieces; the case
+        # count and pieces-per-case are kept as helper values (colis / qte_unit_prd).
+        if staged_unit == "KOL" and inhalt > 0:
+            cases = quantity if quantity > 0 else (kolli if kolli > 0 else Decimal("1"))
+            pieces_per_case = inhalt
+            total_qty = cases * pieces_per_case
+            final_unit = "ST"
+            colis_count = cases
+            qte_unit_prd = pieces_per_case
+        else:
+            total_qty = quantity
+            final_unit = staged_unit or "ST"
+            colis_count = kolli if kolli > 0 else Decimal("1")
+            qte_unit_prd = Decimal("1")
 
-        # AKEAD expects piece price; if invoice gives case price, divide by inhalt
-        if inhalt > 1:
-            piece_price = (unit_price_raw / inhalt).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        # Invoice total (Gesamt) is authoritative; fall back to qty * unit_price.
+        if line_total <= 0 and total_qty > 0 and unit_price_raw > 0:
+            line_total = (total_qty * unit_price_raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Derive piece price from the authoritative total so qte * prix == total,
+        # regardless of whether the PDF unit_price was per-case or per-piece.
+        if total_qty > 0 and line_total > 0:
+            piece_price = (line_total / total_qty).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
         else:
             piece_price = unit_price_raw
 
@@ -512,11 +532,6 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
             tax_rate = Decimal("0")
         # README 5.4: look up id_taxclass from the tax table by rate, don't guess.
         taxclass = resolve_taxclass(tax_rate, tax_classes)
-
-        line_total = parse_decimal_safe(item.get("line_total"), "pdf_import_items.line_total")
-        # Fallback: calculate total when PDF did not provide it
-        if line_total == 0 and quantity > 0 and unit_price_raw > 0:
-            line_total = (quantity * unit_price_raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
         # AKEAD ref code: matched product's own ref, or sequential IMP placeholder
         if not product_ref:
@@ -536,17 +551,17 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
                 "id_prd": product_id,
                 "id_stock": 1,
                 "lib": item["article_name"],
-                # colis = number of packages/cases (kolli); unknown → 1
-                "colis": kolli if kolli > 0 else Decimal("1"),
-                "qte": quantity,
-                "unite": item["unit"],
+                # colis = number of cases (helper); qte = total pieces in base unit
+                "colis": colis_count,
+                "qte": total_qty,
+                "unite": final_unit,
                 "uprice_wot_curr_trf": piece_price,
                 "currency_trf": "EUR",
                 "trf_exch_rate": Decimal("1"),
                 "trf_exch_rate_div": Decimal("1"),
                 "prix_u_ht": piece_price,
-                # qte_unit_prd = content per package (pieces per koli); unknown → quantity
-                "qte_unit_prd": inhalt if inhalt > 0 else quantity,
+                # qte_unit_prd = pieces per case (helper); 1 for plain ST/KG
+                "qte_unit_prd": qte_unit_prd,
                 "taux_tva": tax_rate,
                 "prix_revt": Decimal("0"),
                 "cost_price_curr": Decimal("0"),
@@ -566,14 +581,12 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
             row["id_taxclass"] = taxclass
 
         # Cover alternative column names AKEAD may use for colis/inhalt
-        colis_val = kolli if kolli > 0 else Decimal("1")
-        inhalt_val = qte_unit_prd if qte_unit_prd > 0 else Decimal("1")
         for col in row:
             cl = col.lower()
             if cl in ("nbre_colis", "nb_colis", "qte_colis", "nb_col"):
-                row[col] = colis_val
+                row[col] = colis_count
             elif cl in ("inhalt", "contenu_prd", "qte_contenu", "nb_contenu", "nb_prd_colis"):
-                row[col] = inhalt_val
+                row[col] = qte_unit_prd
         rows.append(row)
     return rows
 
