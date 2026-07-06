@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sys
 import unicodedata
+import uuid
 import urllib.parse
 import urllib.request
 
@@ -528,6 +529,9 @@ def build_product_row(template: dict, item: dict, family: dict, unit: str, sy_uk
         packet_qty = Decimal("1")
 
     row = {key: value for key, value in template.items() if key != "id"}
+    for key in list(row.keys()):
+        if "uuid" in key.lower():
+            row[key] = uuid.uuid4().hex
     row.update(
         {
             "ref_prd": f"IMP{sy_uk:06d}",
@@ -927,26 +931,46 @@ def execute_plan(connection, plan: dict) -> None:
                 product_id = int(product["id"])
             elif action == "neu anlegen" and evaluation["planned_product"]:
                 planned_ref = evaluation["planned_product"].get("ref_prd", "")
+                planned_sy_uk = evaluation["planned_product"].get("sy_uk")
                 article_no = str(item.get("article_no") or "").strip()
                 existing = fetch_one(
                     cursor,
                     """
                     SELECT id FROM produits
                     WHERE ref_prd = %s
+                       OR (sy_uk = %s AND %s IS NOT NULL)
                        OR (lib_tech LIKE %s AND %s <> '')
                     LIMIT 1
                     """,
-                    (planned_ref, f"Lief-Art-Nr: {article_no}%", article_no),
+                    (planned_ref, planned_sy_uk, planned_sy_uk,
+                     f"Lief-Art-Nr: {article_no}%", article_no),
                 )
                 if existing:
                     product_id = int(existing["id"])
                 else:
-                    product_id = insert_row(cursor, "produits", evaluation["planned_product"])
-                    barcode = evaluation["planned_barcode"]
-                    if barcode:
-                        existing_barcode = fetch_one(cursor, "SELECT id FROM codebarres WHERE cod_barr = %s LIMIT 1", (barcode,))
-                        if not existing_barcode:
-                            insert_row(cursor, "codebarres", build_barcode_row(product_id, barcode, evaluation["unit"]))
+                    try:
+                        product_id = insert_row(cursor, "produits", evaluation["planned_product"])
+                    except Exception as exc:
+                        if "1062" in str(exc) or "duplicate" in str(exc).lower():
+                            # Race or leftover record: fetch whichever key conflicted
+                            fallback = fetch_one(
+                                cursor,
+                                "SELECT id FROM produits WHERE ref_prd = %s OR sy_uk = %s LIMIT 1",
+                                (planned_ref, planned_sy_uk),
+                            )
+                            if fallback:
+                                product_id = int(fallback["id"])
+                                print(f"  [duplicate suppressed — reusing product id={product_id}]")
+                            else:
+                                raise
+                        else:
+                            raise
+                    else:
+                        barcode = evaluation["planned_barcode"]
+                        if barcode:
+                            existing_barcode = fetch_one(cursor, "SELECT id FROM codebarres WHERE cod_barr = %s LIMIT 1", (barcode,))
+                            if not existing_barcode:
+                                insert_row(cursor, "codebarres", build_barcode_row(product_id, barcode, evaluation["unit"]))
             else:
                 continue
 
