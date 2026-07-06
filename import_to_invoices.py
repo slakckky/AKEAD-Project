@@ -614,9 +614,12 @@ def print_dry_run(plan: dict) -> None:
     print(f"Staging-Dokument: {plan['document']['id']} / {plan['document']['document_no']}")
     print(f"sy_uk geplant: {plan['next_sy_uk']}")
     print(f"Positionen geplant: {len(plan['detail_rows'])}")
+    print(f"Detail rows count: {len(plan['detail_rows'])}")
     if plan["detail_rows"]:
-        colis_related = [k for k in plan["detail_rows"][0] if "colis" in k.lower() or "inhalt" in k.lower() or "contenu" in k.lower()]
+        first = plan["detail_rows"][0]
+        colis_related = [k for k in first if "colis" in k.lower() or "inhalt" in k.lower() or "contenu" in k.lower()]
         print(f"Kolli/Inhalt columns in invoices_details: {colis_related}")
+        print(f"  colis={first.get('colis')} qte={first.get('qte')} qte_unit_prd={first.get('qte_unit_prd')}")
     print()
     print(render_insert("invoices", plan["invoice_row"]))
     print()
