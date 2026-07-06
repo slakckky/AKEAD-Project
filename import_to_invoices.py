@@ -428,7 +428,7 @@ def build_invoice_row(template: dict, document: dict, next_sy_uk: int, vendor_id
     return row
 
 
-def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, tuple[int, str]], is_austrian_supplier: bool = False) -> list[dict]:
+def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, tuple[int, str]]) -> list[dict]:
     now = datetime.now()
     today = now.date()
     rows = []
@@ -451,10 +451,7 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
         else:
             piece_price = unit_price_raw
 
-        # Austrian suppliers: use the staged tax rate from the PDF.
-        # Foreign suppliers: no Austrian VAT applies, always 0.
-        staged_tax = parse_decimal_safe(item.get("tax_rate"), "pdf_import_items.tax_rate")
-        tax_rate = staged_tax if is_austrian_supplier else Decimal("0")
+        tax_rate = Decimal("0")
 
         line_total = parse_decimal_safe(item.get("line_total"), "pdf_import_items.line_total")
         # Fallback: calculate total when PDF did not provide it
@@ -521,9 +518,8 @@ def prepare_plan(cursor) -> dict:
     vendor_id = resolve_vendor_id(cursor, document.get("supplier_name") or "")
     products = product_map(cursor, items)
 
-    is_austrian = bool(document.get("is_austrian_supplier"))
     invoice_row = build_invoice_row(invoice_template, document, next_sy_uk, vendor_id)
-    detail_rows = build_detail_rows(detail_template, items, products, is_austrian)
+    detail_rows = build_detail_rows(detail_template, items, products)
     invoice_row["tot_colis"] = sum((row["colis"] for row in detail_rows), Decimal("0"))
     invoice_row["sous_tot"] = sum((row["tot_ht_rem"] for row in detail_rows), Decimal("0"))
     invoice_row["tot_tva"] = grouped_tax_total(detail_rows)
