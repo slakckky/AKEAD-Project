@@ -79,9 +79,7 @@ class AkeadImporterApp(tk.Tk):
                 ("Save Invoice to Staging DB", lambda: self.run_script("auto_pdf_import.py")),
             ]),
             ("4. Product Matching", [
-                ("Match with AKEAD Products", lambda: self.run_dry_then_confirm("professional_product_match.py", "Write product matching results to AKEAD?")),
-                ("Get AI Suggestions (Report)", lambda: self.run_script("ai_product_match.py")),
-                ("Approve & Save AI Suggestions", self.run_ai_apply),
+                ("Match Products (Rules + AI)", self.run_full_matching),
             ]),
             ("5. Finalize Invoice", [
                 ("Import Invoice to AKEAD", lambda: self.run_dry_then_confirm("import_to_invoices.py", "Really import invoice to AKEAD?")),
@@ -252,6 +250,44 @@ class AkeadImporterApp(tk.Tk):
                 self.run_script(script_name, input_text="JA\n")
 
         self.run_script(script_name, input_text="NEIN\n", after=after_dry_run)
+
+    def run_full_matching(self) -> None:
+        """Rule-based matching → AI report → AI apply, all in sequence."""
+        if self.running:
+            messagebox.showwarning("AKEAD Invoice Importer", "A script is already running.")
+            return
+
+        def after_ai_report(exit_code: int, output: str) -> None:
+            if exit_code != 0:
+                return
+            if not messagebox.askyesno(
+                "Apply AI Suggestions?",
+                "AI matching report generated.\n\n"
+                "High-confidence (>=85) suggestions will be written to pdf_import_items.product_id.\n\n"
+                "Apply?",
+            ):
+                return
+            self.run_script("ai_product_match.py", args=["--apply"], input_text="JA\n")
+
+        def after_rules_applied(exit_code: int, output: str) -> None:
+            if exit_code != 0:
+                return
+            self.log_line("\n--- Rule-based done. Running AI matching... ---")
+            self.run_script("ai_product_match.py", after=after_ai_report)
+
+        def after_dry_run(exit_code: int, output: str) -> None:
+            if exit_code != 0:
+                return
+            if self._output_blocks_import(output):
+                messagebox.showwarning("Import blocked", "Dry run reported an error or unsafe field. Cancelled.")
+                return
+            if not self._looks_like_dry_run(output):
+                messagebox.showwarning("Dry run not detected", "No clear dry-run marker found. Cancelled.")
+                return
+            if messagebox.askyesno("Confirm Rule-based Matching", "Write rule-based matching results to AKEAD?"):
+                self.run_script("professional_product_match.py", input_text="JA\n", after=after_rules_applied)
+
+        self.run_script("professional_product_match.py", input_text="NEIN\n", after=after_dry_run)
 
     def run_ai_apply(self) -> None:
         # ai_product_match.py dry-run/confirm flow differs from other scripts:
