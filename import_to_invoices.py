@@ -508,8 +508,6 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
         # Write only if column exists in invoices_details (safe for any schema)
         if "ref_prd" in row:
             row["ref_prd"] = product_ref
-        if "contenu" in row:
-            row["contenu"] = qte_unit_prd if qte_unit_prd > 0 else Decimal("1")
         rows.append(row)
     return rows
 
