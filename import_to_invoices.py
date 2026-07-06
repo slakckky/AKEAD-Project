@@ -445,7 +445,7 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
         inhalt = parse_decimal_safe(item.get("inhalt"), "pdf_import_items.inhalt")
         unit_price_raw = parse_decimal_safe(item.get("unit_price"), "pdf_import_items.unit_price")
 
-        # qte_unit_prd written below: inhalt if known, else quantity
+        qte_unit_prd = inhalt if inhalt > 0 else quantity
 
         # AKEAD expects piece price; if invoice gives case price, divide by inhalt
         if inhalt > 1:
