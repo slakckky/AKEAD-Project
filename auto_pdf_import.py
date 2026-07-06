@@ -99,6 +99,7 @@ def execute_create_tables(connection) -> None:
     ensure_column(connection, "pdf_import_documents", "layout_signature", "ALTER TABLE pdf_import_documents ADD COLUMN layout_signature varchar(255) NOT NULL DEFAULT ''")
     ensure_column(connection, "pdf_import_documents", "ocr_used", "ALTER TABLE pdf_import_documents ADD COLUMN ocr_used tinyint(4) unsigned NOT NULL DEFAULT '0'")
     ensure_column(connection, "pdf_import_documents", "is_safe_invoice", "ALTER TABLE pdf_import_documents ADD COLUMN is_safe_invoice tinyint(4) unsigned NOT NULL DEFAULT '0'")
+    ensure_column(connection, "pdf_import_documents", "is_austrian_supplier", "ALTER TABLE pdf_import_documents ADD COLUMN is_austrian_supplier tinyint(4) unsigned NOT NULL DEFAULT '0'")
 
 
 def ensure_column(connection, table: str, column: str, alter_sql: str) -> None:
@@ -862,9 +863,9 @@ def insert_document(cursor, pdf_path: Path, header: dict, items: list[dict], raw
         INSERT INTO pdf_import_documents
           (source_file, document_type, document_no, document_date, supplier_name,
            customer_name, customer_no, delivery_address, raw_text, import_status, created_at,
-           processing_notes, layout_signature, ocr_used, is_safe_invoice)
+           processing_notes, layout_signature, ocr_used, is_safe_invoice, is_austrian_supplier)
         VALUES
-          (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'staged', %s, %s, %s, %s, %s)
+          (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'staged', %s, %s, %s, %s, %s, %s)
         """,
         (
             pdf_path.name,
@@ -881,6 +882,7 @@ def insert_document(cursor, pdf_path: Path, header: dict, items: list[dict], raw
             header["layout_signature"],
             1 if header["ocr_used"] else 0,
             1 if header["is_safe_invoice"] else 0,
+            1 if header.get("is_austrian_supplier") else 0,
         ),
     )
     document_id = int(cursor.lastrowid)
@@ -1064,6 +1066,7 @@ def process_pdf(connection, pdf_path: Path) -> dict:
         document_type = "unknown"
         notes.append("Keine Positionen gefunden: Fallback als unbekanntes Preisanfrage-Dokument im Staging")
 
+    is_austrian_supplier = bool(re.search(r'\bATU\d{8}\b', text, re.IGNORECASE))
     header = {
         "document_type": document_type,
         "document_no": best["invoice_no"],
@@ -1075,6 +1078,7 @@ def process_pdf(connection, pdf_path: Path) -> dict:
         "layout_signature": layout_signature(text, items),
         "ocr_used": ocr_used,
         "is_safe_invoice": is_safe_invoice,
+        "is_austrian_supplier": is_austrian_supplier,
     }
     notes.append(f"Lieferant erkannt: {header['supplier_name'] or 'nicht erkannt'}")
     notes.append(f"Belegnummer erkannt: {header['document_no']}")
