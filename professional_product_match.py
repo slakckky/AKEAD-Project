@@ -226,58 +226,78 @@ def allowed_units(cursor) -> set[str]:
     return {row["cod_unit"] for row in rows}
 
 
-def ensure_supplier_map(cursor) -> None:
-    """Create the supplier->product mapping table if missing (MySQL 5.1 safe)."""
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS supplier_product_map (
-          id INT NOT NULL AUTO_INCREMENT,
-          supplier_name VARCHAR(255) NOT NULL DEFAULT '',
-          supplier_code VARCHAR(100) NOT NULL DEFAULT '',
-          product_id INT NOT NULL DEFAULT 0,
-          unit_hint VARCHAR(20) NOT NULL DEFAULT '',
-          content_hint DECIMAL(12,3) NOT NULL DEFAULT 0,
-          created_at DATETIME NULL,
-          updated_at DATETIME NULL,
-          PRIMARY KEY (id),
-          UNIQUE KEY uk_supplier_code (supplier_name, supplier_code)
-        ) DEFAULT CHARSET=utf8
-        """
-    )
+def resolve_supplier_id(cursor, supplier_name: str) -> int:
+    """Resolve a supplier name to clients.id (id_four). 0 if not found.
+
+    README: suppliers live in the `clients` table; produits_four.id_four
+    references clients.id.
+    """
+    supplier = (supplier_name or "").strip()
+    if not supplier:
+        return 0
+    try:
+        rows = fetch_all(
+            cursor,
+            "SELECT id, nom FROM clients WHERE LOWER(nom) = LOWER(%s) "
+            "OR LOWER(nom) LIKE LOWER(%s) LIMIT 2",
+            (supplier, f"%{supplier}%"),
+        )
+    except Exception:
+        return 0
+    if len(rows) == 1:
+        return int(rows[0]["id"])
+    # Multiple/none: fuzzy pick best
+    best_id, best_score = 0, 0.0
+    for r in rows:
+        score = SequenceMatcher(None, supplier.lower(), (r.get("nom") or "").lower()).ratio()
+        if score > best_score:
+            best_score, best_id = score, int(r["id"])
+    return best_id if best_score >= 0.6 else 0
 
 
-def load_supplier_map(cursor, supplier_name: str) -> dict[str, int]:
-    """Return {supplier_code: product_id} for a supplier's remembered matches."""
-    ensure_supplier_map(cursor)
-    if not supplier_name:
+def load_produits_four_map(cursor, id_four: int) -> dict[str, int]:
+    """Return {ref_prd_four: id_prd} for a supplier from AKEAD's produits_four."""
+    if not id_four:
         return {}
-    rows = fetch_all(
-        cursor,
-        "SELECT supplier_code, product_id FROM supplier_product_map WHERE supplier_name = %s",
-        (supplier_name,),
-    )
-    return {str(r["supplier_code"]): int(r["product_id"]) for r in rows if int(r["product_id"]) > 0}
+    try:
+        rows = fetch_all(
+            cursor,
+            "SELECT ref_prd_four, id_prd FROM produits_four WHERE id_four = %s",
+            (id_four,),
+        )
+    except Exception:
+        return {}
+    return {str(r["ref_prd_four"]): int(r["id_prd"]) for r in rows
+            if str(r.get("ref_prd_four") or "").strip() and int(r["id_prd"]) > 0}
 
 
-def save_supplier_map(cursor, supplier_name: str, supplier_code: str, product_id: int, unit: str = "", content=None) -> None:
-    """Persist a supplier-code -> product match so future invoices auto-match."""
-    if not supplier_name or not supplier_code or int(product_id) <= 0:
+def save_produits_four(cursor, id_prd: int, id_four: int, ref_prd_four: str,
+                       lib: str = "", unit: str = "", price=None) -> None:
+    """Persist a supplier-code -> product match into AKEAD's produits_four."""
+    if int(id_prd) <= 0 or int(id_four) <= 0 or not str(ref_prd_four or "").strip():
         return
-    now = datetime.now().replace(microsecond=0)
-    cursor.execute(
-        """
-        INSERT INTO supplier_product_map
-          (supplier_name, supplier_code, product_id, unit_hint, content_hint, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-          product_id = VALUES(product_id),
-          unit_hint = VALUES(unit_hint),
-          content_hint = VALUES(content_hint),
-          updated_at = VALUES(updated_at)
-        """,
-        (supplier_name[:255], supplier_code[:100], int(product_id), (unit or "")[:20],
-         content if content is not None else Decimal("0"), now, now),
-    )
+    price_val = price if price is not None else Decimal("0")
+    try:
+        cursor.execute(
+            """
+            INSERT INTO produits_four
+              (id_prd, id_four, ref_prd_four, sy_uk_var, lib_prd_four, b_defaut,
+               prix_u_ht_last, discount_rate1_last, discount_rate2_last, discount_rate3_last,
+               currency_last, unite, dat_last_purchase, usr_cre, dat_cre, usr_upd, dat_upd)
+            VALUES (%s, %s, %s, 0, %s, '', %s, 0, 0, 0, 'EUR', %s, CURDATE(), 'root', CURDATE(), 'root', NOW())
+            ON DUPLICATE KEY UPDATE
+              ref_prd_four = VALUES(ref_prd_four),
+              lib_prd_four = VALUES(lib_prd_four),
+              prix_u_ht_last = VALUES(prix_u_ht_last),
+              unite = VALUES(unite),
+              dat_last_purchase = CURDATE(),
+              usr_upd = 'root', dat_upd = NOW()
+            """,
+            (int(id_prd), int(id_four), str(ref_prd_four)[:50], (lib or "")[:5000],
+             price_val, (unit or "")[:3]),
+        )
+    except Exception as exc:
+        print(f"  [produits_four save skipped: {exc}]")
 
 
 def product_template(cursor) -> dict:
@@ -646,7 +666,7 @@ def evaluate_item(item: dict, products: list[dict], families: list[dict], units:
     notes = []
     supplier_map = supplier_map or {}
 
-    # Layer 0: remembered supplier-code -> product mapping (highest priority)
+    # Layer 0: supplier-code -> product from AKEAD produits_four (highest priority)
     product = None
     match_type = ""
     score = 0
@@ -654,9 +674,9 @@ def evaluate_item(item: dict, products: list[dict], families: list[dict], units:
     if mapped_id:
         product = next((p for p in products if int(p["id"]) == mapped_id), None)
         if product:
-            match_type = "supplier_map"
+            match_type = "produits_four"
             score = 100
-            notes.append("aus supplier_product_map uebernommen")
+            notes.append("aus produits_four uebernommen")
 
     if not product:
         product = exact_ref_match(item, products, include_pdf_import=False)
@@ -826,14 +846,19 @@ def prepare_plan(cursor) -> dict:
     template = product_template(cursor)
     next_sy_uk = next_numeric_sy_uk(cursor, "produits")
     supplier_name = document_supplier_name(cursor, document_id)
-    supplier_map = load_supplier_map(cursor, supplier_name)
+    id_four = resolve_supplier_id(cursor, supplier_name)
+    supplier_map = load_produits_four_map(cursor, id_four)
     if supplier_map:
-        print(f"supplier_product_map: {len(supplier_map)} remembered matches for '{supplier_name}'")
+        print(f"produits_four: {len(supplier_map)} known matches for '{supplier_name}' (id_four={id_four})")
+    elif id_four:
+        print(f"produits_four: no matches yet for '{supplier_name}' (id_four={id_four})")
+    else:
+        print(f"Supplier '{supplier_name}' not found in clients — produits_four matching skipped.")
     evaluations = []
     for index, item in enumerate(items):
         evaluations.append(evaluate_item(item, products, families, units, template, next_sy_uk + index, supplier_map))
     return {"document_id": document_id, "items": items, "evaluations": evaluations,
-            "supplier_name": supplier_name}
+            "supplier_name": supplier_name, "id_four": id_four}
 
 
 def report_row(evaluation: dict) -> dict:
@@ -1068,15 +1093,16 @@ def execute_plan(connection, plan: dict) -> None:
                 (product_id, item["id"]),
             )
 
-            # Remember this supplier-code -> product match for future invoices
-            if product_id > 0:
-                save_supplier_map(
+            # Remember this supplier-code -> product match in AKEAD produits_four
+            if product_id > 0 and plan.get("id_four"):
+                save_produits_four(
                     cursor,
-                    plan.get("supplier_name") or "",
-                    str(item.get("article_no") or "").strip(),
                     product_id,
+                    int(plan["id_four"]),
+                    str(item.get("article_no") or "").strip(),
+                    str(item.get("article_name") or ""),
                     evaluation.get("unit") or "",
-                    item.get("inhalt"),
+                    parse_decimal(item.get("unit_price")),
                 )
     connection.commit()
 
