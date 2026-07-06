@@ -360,7 +360,7 @@ def product_map(cursor, items: list[dict]) -> dict[str, tuple[int, str]]:
     result: dict[str, tuple[int, str]] = {}
     has_product_id = column_exists(cursor, "pdf_import_items", "product_id")
     for item in items:
-        article_no = item["article_no"]
+        article_no = str(item.get("article_no") or "")
 
         # 1. Use product_id set by Step 4 matching (includes newly created IMP products)
         if has_product_id and int(item.get("product_id") or 0) > 0:
@@ -510,7 +510,7 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
             row["ref_prd"] = product_ref
 
         # Cover alternative column names AKEAD may use for colis/inhalt
-        colis_val = kolli if kolli > 0 else quantity
+        colis_val = kolli if kolli > 0 else Decimal("1")
         inhalt_val = qte_unit_prd if qte_unit_prd > 0 else Decimal("1")
         for col in row:
             cl = col.lower()
@@ -559,7 +559,7 @@ def prepare_plan(cursor) -> dict:
 
 
 def write_mapping(plan: dict) -> None:
-    missing_products = [article for article, product_id in plan["product_ids"].items() if product_id == 0]
+    missing_products = [article for article, (pid, _) in plan["product_ids"].items() if pid == 0]
     lines = [
         "# Invoice Mapping",
         "",
@@ -592,9 +592,9 @@ def write_mapping(plan: dict) -> None:
         "| PDF Artikel | Ziel `id_prd` | Status |",
         "| --- | --- | --- |",
     ]
-    for article_no, product_id in plan["product_ids"].items():
-        status = "Produkt gefunden" if product_id else "nicht gefunden, erzwungen `id_prd=0`"
-        lines.append(f"| {article_no} | {product_id} | {status} |")
+    for article_no, (pid, ref) in plan["product_ids"].items():
+        status = f"found id={pid} ref={ref}" if pid else "not found, id_prd=0"
+        lines.append(f"| {article_no} | {pid} | {status} |")
 
     lines.extend(
         [

@@ -976,6 +976,8 @@ def execute_plan(connection, plan: dict) -> None:
                     else:
                         product_id = 0
             else:
+                # Zero out stale product_id from previous runs
+                cursor.execute("UPDATE pdf_import_items SET product_id = 0 WHERE id = %s", (item["id"],))
                 continue
 
             cursor.execute(

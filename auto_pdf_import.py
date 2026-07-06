@@ -613,9 +613,10 @@ def split_quantity_unit(value: str) -> tuple[Decimal, str]:
 
 def invoice_base_unit(pdf_unit: str, article_name: str = "") -> str:
     raw = f"{pdf_unit or ''} {article_name or ''}".casefold()
-    if "kg" in raw:
+    if re.search(r"\bkg\b", raw):
         return "Kg"
-    if "kol" in raw or "kart" in raw or "pk" in raw or "pak" in raw:
+    # Word-boundary check: avoid matching "kol" inside "schokolade", "nikolaus" etc.
+    if re.search(r"\b(kol|koll|kolli|kart|karton|pk|pak)\b", raw):
         return "KOL"
     return normalize_unit(pdf_unit or "St")
 
@@ -702,7 +703,8 @@ def item_from_cells(header: list[str], row: list[str]) -> dict | None:
             quantity = stk_kg_value
             unit = base_unit
             kolli = carton_qty if "kart" in (cells[idx_qty] or "").casefold() else Decimal("0")
-            inhalt = stk_kg_value
+            # inhalt = 0 for non-KOL: the price is already per-piece, no division needed
+            inhalt = Decimal("0")
         tax_rate = tax_from_cell(cells[idx_tax]) if idx_tax is not None else ""
     else:
         quantity = carton_qty
