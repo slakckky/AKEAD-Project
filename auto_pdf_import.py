@@ -404,46 +404,74 @@ def _trim_to_company_name(raw: str) -> str:
     return raw.split(",")[0].strip()[:255]
 
 
-def _customer_block_start(lines: list[str]) -> int:
-    """Return the line index where the customer/recipient block begins, or len(lines) if not found.
-
-    Invoices typically have the supplier at the top. The customer block starts
-    when an explicit recipient label appears (An:, Rechnungsempfaenger, etc.).
-    Without such a label we assume the whole visible header belongs to the supplier.
-    """
-    for i, line in enumerate(lines[:60]):
-        if re.search(
-            r"^\s*(An\s*:|Rechnungsempf[aä]nger|Empf[aä]nger\s*:|K[aä]ufer\s*:|Bill\s+to|Ship\s+to)",
-            line, re.IGNORECASE,
-        ):
-            return i
-    return len(lines)
-
-
 def detect_supplier(lines: list[str], text: str) -> str:
-    # The supplier address is always at the TOP of the invoice (before the customer block).
-    # Scan only the lines that precede the first explicit customer/recipient label.
-    customer_start = _customer_block_start(lines)
-    supplier_lines = lines[:min(customer_start, 30)]
+    """Detect the supplier (invoice issuer) from PDF text.
 
-    ignore = re.compile(
-        r"^(nr\.?|artikel|beschreibung|menge|einheit|preis|betrag)$"
-        r"|rechnung|beleg|datum|kund|liefer|seite|tel\.?|fax|email|iban|ust|uid"
-        r"|verkauf|verkaeufer|verk\.",
+    Strategy:
+    1. Collect all company-suffix lines in the first 60 lines.
+    2. Score each candidate by proximity to supplier anchors (IBAN, USt-Id,
+       Steuernummer, HRB) and penalise proximity to customer anchors
+       (Kundennr, Rg.an, Lieferanschrift).
+    3. Return the best-scoring candidate after trimming address fragments.
+    4. Fall back to first non-ignored line with letters if no suffix found.
+    """
+    company_suffix = re.compile(
+        r"\b(GmbH|e\.?K\.?|KG|AG|Ltd|Inc|Corp|OHG|GbR|S\.A\.)\b", re.IGNORECASE
+    )
+    supplier_anchor = re.compile(
+        r"\b(ust.?id|uid.?nr|steuernr|steuer.?nr|iban|bic|bankverbindung|hrb|amtsgericht|inhaber)\b",
         re.IGNORECASE,
     )
-    company_suffix = re.compile(r"\b(GmbH|e\.?K\.?|KG|AG|Ltd|Inc|Corp|OHG|GbR|S\.A\.)\b", re.IGNORECASE)
+    customer_anchor = re.compile(
+        r"\b(kundennr|kunden.?nr|kunden.?nummer|rg\.?\s*an|rechnung\s*an"
+        r"|lieferanschrift|rechnungsanschrift|lieferadresse|rechnungsadresse)\b"
+        r"|^\s*(an\s*:|empf[aä]nger\s*:)",
+        re.IGNORECASE,
+    )
+    ignore = re.compile(
+        r"^(nr\.?|artikel|beschreibung|menge|einheit|preis|betrag)$"
+        r"|^(rechnung|beleg|datum|seite)\b"
+        r"|^(tel\.?|fax|email|web|www)\b",
+        re.IGNORECASE,
+    )
 
-    # Pass 1: first line with a legal company suffix in the supplier block
-    for line in supplier_lines:
+    # Collect company candidates and anchor positions in first 60 lines
+    candidates: list[tuple[int, str]] = []
+    supplier_anchors: list[int] = []
+    customer_anchors: list[int] = []
+
+    for i, line in enumerate(lines[:60]):
         clean = " ".join(line.split()).strip(":- ")
-        if len(clean) < 3 or ignore.search(clean):
+        if len(clean) < 3:
             continue
-        if company_suffix.search(clean):
-            return _trim_to_company_name(clean)
+        if company_suffix.search(clean) and not ignore.search(clean):
+            candidates.append((i, clean))
+        if supplier_anchor.search(clean):
+            supplier_anchors.append(i)
+        if customer_anchor.search(clean):
+            customer_anchors.append(i)
 
-    # Pass 2: first non-ignored line with letters in the supplier block
-    for line in supplier_lines:
+    def proximity(idx: int, anchors: list[int], window: int = 8) -> int:
+        return sum(1 for a in anchors if abs(idx - a) <= window)
+
+    if candidates:
+        if len(candidates) == 1:
+            return _trim_to_company_name(candidates[0][1])
+
+        # Score: +points near supplier anchors, -points near customer anchors
+        best_name = ""
+        best_score = -999
+        for idx, name in candidates:
+            score = proximity(idx, supplier_anchors) - proximity(idx, customer_anchors) * 2
+            # Prefer candidates that appear EARLIER (letterhead position) as tiebreaker
+            score -= idx * 0.01
+            if score > best_score:
+                best_score = score
+                best_name = name
+        return _trim_to_company_name(best_name)
+
+    # Fallback: first non-ignored line with letters in first 20 lines
+    for line in lines[:20]:
         clean = " ".join(line.split()).strip(":- ")
         if len(clean) < 3 or ignore.search(clean):
             continue
