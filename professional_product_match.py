@@ -324,15 +324,20 @@ def normalize_unit(pdf_unit: str, units: set[str]) -> tuple[str, str]:
         "pk": "KOL",
     }
     unit = mapping.get(raw, pdf_unit[:3].upper() if pdf_unit else "ST")
-    if unit in units:
+    # Case-insensitive lookup: match whatever case AKEAD uses (St, ST, Stk, ...)
+    units_upper = {u.upper(): u for u in units}
+    if unit.upper() in units_upper:
+        actual = units_upper[unit.upper()]
         note = "aus PDF normalisiert"
         if raw in {"g", "gr"}:
             note = "g/Gr nicht als Haupteinheit genutzt, auf ST normalisiert"
-        elif unit == "KOL":
+        elif actual.upper() == "KOL":
             note = "Karton/Kolli als KOL (Koli) normalisiert, nicht als Einzelstueck (ST)"
-        return unit, note
-    if "ST" in units:
-        return "ST", f"PDF-Einheit {pdf_unit!r} nicht erlaubt, Fallback ST"
+        return actual, note
+    # Fallback to piece unit in whatever case AKEAD stores it
+    st_actual = units_upper.get("ST", "")
+    if st_actual:
+        return st_actual, f"PDF-Einheit {pdf_unit!r} nicht erlaubt, Fallback {st_actual}"
     return "", f"PDF-Einheit {pdf_unit!r} nicht erlaubt, keine sichere Einheit"
 
 
@@ -345,8 +350,10 @@ def resolve_unit(item: dict, units: set[str]) -> tuple[str, str]:
     packet_qty'de kaybolmasin diye)."""
     unit, note = normalize_unit(item.get("unit") or "", units)
     inhalt = item.get("inhalt")
-    if unit == "ST" and inhalt and inhalt > 1 and "KOL" in units:
-        return "KOL", (
+    units_upper = {u.upper() for u in units}
+    if unit.upper() == "ST" and inhalt and inhalt > 1 and "KOL" in units_upper:
+        kol = next(u for u in units if u.upper() == "KOL")
+        return kol, (
             f"'{item.get('unit') or ''}' icin Inhalt kolonu {inhalt} adet gosteriyor - "
             "tek bir ST degil, KOL olarak normalisiert"
         )
