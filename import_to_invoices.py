@@ -445,8 +445,7 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
         inhalt = parse_decimal_safe(item.get("inhalt"), "pdf_import_items.inhalt")
         unit_price_raw = parse_decimal_safe(item.get("unit_price"), "pdf_import_items.unit_price")
 
-        # qte_unit_prd = content per ordered unit (pieces/case for KOL, 1 for ST/KG)
-        qte_unit_prd = inhalt if inhalt > 0 else Decimal("1")
+        # qte_unit_prd written below: inhalt if known, else quantity
 
         # AKEAD expects piece price; if invoice gives case price, divide by inhalt
         if inhalt > 1:
@@ -484,8 +483,8 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
                 "id_prd": product_id,
                 "id_stock": 1,
                 "lib": item["article_name"],
-                # colis = packages/cases; never 0 — use quantity as minimum
-                "colis": kolli if kolli > 0 else quantity,
+                # colis = number of packages/cases (kolli); unknown → 1
+                "colis": kolli if kolli > 0 else Decimal("1"),
                 "qte": quantity,
                 "unite": item["unit"],
                 "uprice_wot_curr_trf": piece_price,
@@ -493,7 +492,8 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
                 "trf_exch_rate": Decimal("1"),
                 "trf_exch_rate_div": Decimal("1"),
                 "prix_u_ht": piece_price,
-                "qte_unit_prd": qte_unit_prd,
+                # qte_unit_prd = content per package (pieces per koli); unknown → quantity
+                "qte_unit_prd": inhalt if inhalt > 0 else quantity,
                 "taux_tva": tax_rate,
                 "prix_revt": Decimal("0"),
                 "cost_price_curr": Decimal("0"),
