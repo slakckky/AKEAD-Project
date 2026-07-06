@@ -243,19 +243,40 @@ def staging_items(cursor, document_id: int) -> list[dict]:
     )
 
 
-def _search_supplier_table(cursor, table: str, supplier: str) -> int | None:
-    """Search for supplier in given table; return id or None."""
+def _clients_name_col(cursor) -> str:
+    """Find the client-name column in the clients table."""
+    for col in ("nom", "raison_sociale", "lib_clt", "lib", "name"):
+        if column_exists(cursor, "clients", col):
+            return col
+    return "nom"
+
+
+def _clean_supplier_name(supplier: str) -> str:
+    """Cut trailing label/address words that leak into the supplier name."""
+    supplier = " ".join((supplier or "").split())
+    # Stop at address/bank/contact labels that follow the company name
+    cut = re.split(
+        r"\b(Anschrift|Adresse|Bankverbindung|Bank|IBAN|BIC|Tel\.?|Telefon|Fax"
+        r"|E-?Mail|UID|USt|Steuernr|Firmenbuch|Kundennr)\b",
+        supplier, maxsplit=1, flags=re.IGNORECASE,
+    )[0].strip(" ,-/:")
+    return cut or supplier
+
+
+def _search_clients(cursor, name_col: str, supplier: str) -> int | None:
     try:
         rows = fetch_all(
             cursor,
-            f"SELECT id, code, nom FROM `{table}` WHERE LOWER(nom) = LOWER(%s) OR LOWER(code) = LOWER(%s)",
-            (supplier, supplier),
+            f"SELECT id, `{name_col}` AS nom FROM clients WHERE LOWER(`{name_col}`) = LOWER(%s)",
+            (supplier,),
         )
         if rows:
             return int(rows[0]["id"])
         rows = fetch_all(
             cursor,
-            f"SELECT id, code, nom FROM `{table}` WHERE LOWER(nom) LIKE LOWER(%s) OR LOWER(%s) LIKE CONCAT('%%', LOWER(nom), '%%')",
+            f"SELECT id, `{name_col}` AS nom FROM clients "
+            f"WHERE LOWER(`{name_col}`) LIKE LOWER(%s) "
+            f"OR LOWER(%s) LIKE CONCAT('%%', LOWER(`{name_col}`), '%%')",
             (f"%{supplier}%", supplier),
         )
         if rows:
@@ -265,28 +286,23 @@ def _search_supplier_table(cursor, table: str, supplier: str) -> int | None:
     return None
 
 
-def _fuzzy_supplier_table(cursor, table: str, supplier: str) -> tuple[int | None, float]:
+def _fuzzy_clients(cursor, name_col: str, supplier: str) -> tuple[int | None, float]:
     try:
-        all_rows = fetch_all(cursor, f"SELECT id, code, nom FROM `{table}` ORDER BY nom")
+        all_rows = fetch_all(cursor, f"SELECT id, `{name_col}` AS nom FROM clients")
     except Exception:
         return None, 0.0
-    best_score = 0.0
-    best_id: int | None = None
+    best_score, best_id = 0.0, None
     norm = supplier.lower()
     for v in all_rows:
-        nom = (v.get("nom") or "").lower()
-        code = (v.get("code") or "").lower()
-        score = max(SequenceMatcher(None, norm, nom).ratio(), SequenceMatcher(None, norm, code).ratio())
+        score = SequenceMatcher(None, norm, (v.get("nom") or "").lower()).ratio()
         if score > best_score:
-            best_score = score
-            best_id = int(v["id"])
+            best_score, best_id = score, int(v["id"])
     return best_id, best_score
 
 
-def _auto_create_supplier(cursor, supplier: str) -> int:
-    """Create the supplier in the clients table (AKEAD supplier master)."""
-    code = re.sub(r"[^A-Za-z0-9]", "", supplier)[:10].upper() or "IMP"
-    cursor.execute("INSERT INTO clients (code, nom) VALUES (%s, %s)", (code, supplier[:100]))
+def _auto_create_supplier(cursor, name_col: str, supplier: str) -> int:
+    """Create the supplier in clients. Minimal insert relies on column defaults."""
+    cursor.execute(f"INSERT INTO clients (`{name_col}`) VALUES (%s)", (supplier[:100],))
     new_id = int(cursor.lastrowid)
     print(f"Auto-created supplier '{supplier}' in clients (id={new_id})")
     return new_id
@@ -296,23 +312,24 @@ def resolve_vendor_id(cursor, supplier_name: str) -> int:
     """Resolve supplier name to clients.id (used as invoices.id_clt).
 
     README: suppliers live in `clients`; the invoice counterparty is id_clt.
-    Resolve against clients only so the returned id is always a valid clients.id.
     """
-    supplier = (supplier_name or "").strip()
+    supplier = _clean_supplier_name(supplier_name)
     if not supplier:
         raise ValueError("id_clt cannot be set: supplier_name missing from staging document.")
 
-    found = _search_supplier_table(cursor, "clients", supplier)
+    name_col = _clients_name_col(cursor)
+
+    found = _search_clients(cursor, name_col, supplier)
     if found is not None:
         return found
 
-    best_id, best_score = _fuzzy_supplier_table(cursor, "clients", supplier)
+    best_id, best_score = _fuzzy_clients(cursor, name_col, supplier)
     if best_id is not None and best_score >= 0.7:
         print(f"Supplier '{supplier}' not found exactly — using closest client (score {best_score:.0%})")
         return best_id
 
     print(f"Supplier '{supplier}' not found in clients — creating automatically.")
-    return _auto_create_supplier(cursor, supplier)
+    return _auto_create_supplier(cursor, name_col, supplier)
 
 
 def latest_invoice_template(cursor) -> dict:

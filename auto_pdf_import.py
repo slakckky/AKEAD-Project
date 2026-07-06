@@ -402,8 +402,11 @@ def _trim_to_company_name(raw: str) -> str:
       'Aymarkt GmbH Mariahilfer Str. 1 1060 Wien' -> 'Aymarkt GmbH'
     """
     street_cut = re.compile(
-        # compound: "Industriestraße", "Industriestr.", "Hauptgasse" etc.
-        r"\s+\S+(?:str\.|straße|strasse|gasse|weg|platz|allee|ring|damm|chaussee)"
+        # label words that follow the company name (Anschrift, Bankverbindung ...)
+        r"\s+(?:anschrift|adresse|bankverbindung|bank|iban|bic|tel\.?|telefon"
+        r"|fax|e-?mail|uid|ust|steuernr|firmenbuch|kundennr)\b"
+        # compound: "Industriestraße", "Industriestr.", "Musterstr", "Hauptgasse" etc.
+        r"|\s+\S+(?:str\.?|straße|strasse|gasse|weg|platz|allee|ring|damm|chaussee)\b"
         # spaced: "Mariahilfer Str.", "Muster Gasse" etc.
         r"|\s+\w+\s+(?:str\.|strasse|straße|gasse|weg|platz|allee|ring|damm|chaussee)"
         r"|\s+(?:str\.|strasse|straße|gasse|weg|platz|allee|ring|damm|chaussee)"
