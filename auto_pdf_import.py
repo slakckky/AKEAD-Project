@@ -37,6 +37,18 @@ MIN_POSITIONS_BEFORE_OCR = 10
 
 DDG_AVAILABLE = True
 
+# Load own company name from .env to exclude from supplier detection
+def _load_own_company() -> str:
+    for path in ENV_CANDIDATES:
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("OWN_COMPANY_NAME="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+OWN_COMPANY_NAME: str = _load_own_company()
+
 
 def duckduckgo_company_lookup(name: str) -> str:
     """Search DuckDuckGo Instant Answers for company address info.
@@ -440,9 +452,14 @@ def detect_supplier(lines: list[str], text: str) -> str:
     supplier_anchors: list[int] = []
     customer_anchors: list[int] = []
 
+    own_name = OWN_COMPANY_NAME.lower()
     for i, line in enumerate(lines[:60]):
         clean = " ".join(line.split()).strip(":- ")
         if len(clean) < 3:
+            continue
+        # Skip own company — it is always the buyer, never the supplier
+        if own_name and own_name in clean.lower():
+            customer_anchors.append(i)
             continue
         if company_suffix.search(clean) and not ignore.search(clean):
             candidates.append((i, clean))
