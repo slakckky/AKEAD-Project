@@ -344,12 +344,15 @@ def validate_sy_uk(cursor) -> int:
     return next_sy_uk
 
 
-def validate_no_doc(cursor, document_no: str) -> None:
+def validate_no_doc(cursor, document_no: str) -> bool:
+    """Returns True if the invoice already exists (will be replaced on import)."""
     if not document_no:
         raise ValueError("no_doc kann nicht gesetzt werden: PDF document_no fehlt.")
     existing = fetch_one(cursor, "SELECT id FROM invoices WHERE no_doc = %s LIMIT 1", (document_no,))
     if existing:
-        raise ValueError(f"no_doc existiert bereits in invoices: {document_no}")
+        print(f"Note: invoice {document_no} already exists — it will be replaced on import.")
+        return True
+    return False
 
 
 def product_map(cursor, items: list[dict]) -> dict[str, tuple[int, str]]:
@@ -519,7 +522,7 @@ def prepare_plan(cursor) -> dict:
     invoice_template = latest_invoice_template(cursor)
     detail_template = latest_detail_template(cursor, invoice_template["id"])
     next_sy_uk = validate_sy_uk(cursor)
-    validate_no_doc(cursor, document["document_no"])
+    already_exists = validate_no_doc(cursor, document["document_no"])
     vendor_id = resolve_vendor_id(cursor, document.get("supplier_name") or "")
     products = product_map(cursor, items)
 
@@ -540,6 +543,7 @@ def prepare_plan(cursor) -> dict:
         "product_ids": products,
         "invoice_row": invoice_row,
         "detail_rows": detail_rows,
+        "already_exists": already_exists,
     }
 
 
@@ -623,7 +627,16 @@ def insert_row(cursor, table: str, row: dict) -> int:
 
 def execute_import(connection, plan: dict) -> int:
     with connection.cursor() as cursor:
-        validate_no_doc(cursor, plan["document"]["document_no"])
+        # Delete existing invoice if it was flagged during prepare_plan
+        if plan.get("already_exists"):
+            doc_no = plan["document"]["document_no"]
+            existing = fetch_one(cursor, "SELECT id FROM invoices WHERE no_doc = %s LIMIT 1", (doc_no,))
+            if existing:
+                old_id = int(existing["id"])
+                cursor.execute("DELETE FROM invoices_details WHERE id_doc = %s", (old_id,))
+                cursor.execute("DELETE FROM invoices WHERE id = %s", (old_id,))
+                print(f"Replaced existing invoice {doc_no} (id={old_id}).")
+
         existing_sy_uk = fetch_one(cursor, "SELECT id FROM invoices WHERE sy_uk = %s LIMIT 1", (plan["next_sy_uk"],))
         if existing_sy_uk:
             raise ValueError(f"sy_uk wurde inzwischen vergeben: {plan['next_sy_uk']}")
