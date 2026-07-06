@@ -14,6 +14,8 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
+import urllib.parse
+import urllib.request
 from typing import Any
 
 import pdfplumber
@@ -32,6 +34,46 @@ ERROR_REPORT = BASE_DIR / "import_errors.csv"
 DATABASE_NAME = "datenbank"
 
 MIN_POSITIONS_BEFORE_OCR = 10
+
+DDG_AVAILABLE = True
+
+
+def duckduckgo_company_lookup(name: str) -> str:
+    """Search DuckDuckGo Instant Answers for company address info.
+    Returns a short address/description string, or '' if nothing found.
+    Best-effort: small/unknown suppliers will likely return nothing.
+    """
+    global DDG_AVAILABLE
+    if not DDG_AVAILABLE or not name:
+        return ""
+    try:
+        query = urllib.parse.quote(f"{name} Adresse")
+        url = f"https://api.duckduckgo.com/?q={query}&format=json&no_html=1&skip_disambig=1"
+        req = urllib.request.Request(url, headers={"User-Agent": "akead-pdf-import/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        DDG_AVAILABLE = False
+        logging.warning("DuckDuckGo lookup failed: %s", exc)
+        return ""
+
+    # Infobox: structured company data (best source)
+    infobox = data.get("Infobox") or {}
+    for entry in infobox.get("content") or []:
+        label = (entry.get("label") or "").lower()
+        if any(k in label for k in ("headquarter", "sitz", "adresse", "address", "standort")):
+            value = str(entry.get("value") or "").strip()
+            if value:
+                return value[:300]
+
+    # AbstractText: Wikipedia-style summary (often has location)
+    abstract = (data.get("AbstractText") or "").strip()
+    if abstract:
+        # Keep only if it contains something address-like (zip, city, country)
+        if re.search(r"\d{4,5}|\b(GmbH|str\.|strasse|straße|platz|weg)\b", abstract, re.IGNORECASE):
+            return abstract[:300]
+
+    return ""
 UNKNOWN_FALLBACK_TYPES = {"unknown", "unbekannt", "parser_unsicher"}
 
 
@@ -101,6 +143,7 @@ def execute_create_tables(connection) -> None:
     ensure_column(connection, "pdf_import_documents", "ocr_used", "ALTER TABLE pdf_import_documents ADD COLUMN ocr_used tinyint(4) unsigned NOT NULL DEFAULT '0'")
     ensure_column(connection, "pdf_import_documents", "is_safe_invoice", "ALTER TABLE pdf_import_documents ADD COLUMN is_safe_invoice tinyint(4) unsigned NOT NULL DEFAULT '0'")
     ensure_column(connection, "pdf_import_documents", "is_austrian_supplier", "ALTER TABLE pdf_import_documents ADD COLUMN is_austrian_supplier tinyint(4) unsigned NOT NULL DEFAULT '0'")
+    ensure_column(connection, "pdf_import_documents", "supplier_address", "ALTER TABLE pdf_import_documents ADD COLUMN supplier_address varchar(500) NOT NULL DEFAULT ''")
 
 
 def ensure_column(connection, table: str, column: str, alter_sql: str) -> None:
@@ -885,9 +928,10 @@ def insert_document(cursor, pdf_path: Path, header: dict, items: list[dict], raw
         INSERT INTO pdf_import_documents
           (source_file, document_type, document_no, document_date, supplier_name,
            customer_name, customer_no, delivery_address, raw_text, import_status, created_at,
-           processing_notes, layout_signature, ocr_used, is_safe_invoice, is_austrian_supplier)
+           processing_notes, layout_signature, ocr_used, is_safe_invoice, is_austrian_supplier,
+           supplier_address)
         VALUES
-          (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'staged', %s, %s, %s, %s, %s, %s)
+          (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'staged', %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             pdf_path.name,
@@ -905,6 +949,7 @@ def insert_document(cursor, pdf_path: Path, header: dict, items: list[dict], raw
             1 if header["ocr_used"] else 0,
             1 if header["is_safe_invoice"] else 0,
             1 if header.get("is_austrian_supplier") else 0,
+            header.get("supplier_address") or "",
         ),
     )
     document_id = int(cursor.lastrowid)
@@ -1089,11 +1134,15 @@ def process_pdf(connection, pdf_path: Path) -> dict:
         notes.append("Keine Positionen gefunden: Fallback als unbekanntes Preisanfrage-Dokument im Staging")
 
     is_austrian_supplier = bool(re.search(r'\bATU\d{8}\b', text, re.IGNORECASE))
+    supplier_name = best["supplier"] or ""
+    supplier_address = duckduckgo_company_lookup(supplier_name) if supplier_name else ""
+    if supplier_address:
+        notes.append(f"Supplier address via web: {supplier_address[:120]}")
     header = {
         "document_type": document_type,
         "document_no": best["invoice_no"],
         "document_date_raw": best["date_raw"],
-        "supplier_name": best["supplier"],
+        "supplier_name": supplier_name,
         "customer_name": detect_customer(text),
         "customer_no": detect_customer_no(text),
         "delivery_address": "",
@@ -1101,6 +1150,7 @@ def process_pdf(connection, pdf_path: Path) -> dict:
         "ocr_used": ocr_used,
         "is_safe_invoice": is_safe_invoice,
         "is_austrian_supplier": is_austrian_supplier,
+        "supplier_address": supplier_address,
     }
     notes.append(f"Lieferant erkannt: {header['supplier_name'] or 'nicht erkannt'}")
     notes.append(f"Belegnummer erkannt: {header['document_no']}")
