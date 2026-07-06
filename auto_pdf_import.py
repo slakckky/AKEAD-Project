@@ -594,7 +594,7 @@ def item_from_cells(header: list[str], row: list[str]) -> dict | None:
     idx_price = column_index(header, ["preis", "stpreis", "ep"], exclude_if=["letzte", "g."])
     # "kz" (Kennzeichen) is a tax-category code, not a percentage — excluded
     idx_tax = column_index(header, ["mwst", "tax", "ust"])
-    idx_total = column_index(header, ["betrag", "gesamt", "summe", "gpreis", "g. preis", "g preis"])
+    idx_total = column_index(header, ["betrag", "gesamt", "summe", "gpreis", "g.preis", "g. preis", "g preis", "gesamtpreis", "total"])
     if idx_qty is None or idx_total is None:
         return None
     cells = row + [""] * 10

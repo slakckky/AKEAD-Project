@@ -352,31 +352,32 @@ def validate_no_doc(cursor, document_no: str) -> None:
         raise ValueError(f"no_doc existiert bereits in invoices: {document_no}")
 
 
-def product_map(cursor, items: list[dict]) -> dict[str, int]:
-    result: dict[str, int] = {}
+def product_map(cursor, items: list[dict]) -> dict[str, tuple[int, str]]:
+    """Returns {article_no: (product_id, ref_prd)} for each item."""
+    result: dict[str, tuple[int, str]] = {}
     has_product_id = column_exists(cursor, "pdf_import_items", "product_id")
     for item in items:
         article_no = item["article_no"]
 
         # 1. Use product_id set by Step 4 matching (includes newly created IMP products)
         if has_product_id and int(item.get("product_id") or 0) > 0:
-            product = fetch_one(cursor, "SELECT id FROM produits WHERE id = %s LIMIT 1", (int(item["product_id"]),))
+            product = fetch_one(cursor, "SELECT id, ref_prd FROM produits WHERE id = %s LIMIT 1", (int(item["product_id"]),))
             if product:
-                result[article_no] = int(product["id"])
+                result[article_no] = (int(product["id"]), str(product.get("ref_prd") or ""))
                 continue
 
         # 2. Look up by supplier article number stored in lib_tech ("Lief-Art-Nr: <no>")
         if article_no:
             rows = fetch_all(
                 cursor,
-                "SELECT id FROM produits WHERE lib_tech LIKE %s LIMIT 1",
+                "SELECT id, ref_prd FROM produits WHERE lib_tech LIKE %s LIMIT 1",
                 (f"Lief-Art-Nr: {article_no}%",),
             )
             if rows:
-                result[article_no] = int(rows[0]["id"])
+                result[article_no] = (int(rows[0]["id"]), str(rows[0].get("ref_prd") or ""))
                 continue
 
-        result[article_no] = 0
+        result[article_no] = (0, "")
     return result
 
 
@@ -427,21 +428,43 @@ def build_invoice_row(template: dict, document: dict, next_sy_uk: int, vendor_id
     return row
 
 
-def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, int], is_austrian_supplier: bool = False) -> list[dict]:
+def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, tuple[int, str]], is_austrian_supplier: bool = False) -> list[dict]:
     now = datetime.now()
     today = now.date()
     rows = []
-    for item in items:
+    for idx, item in enumerate(items, start=1):
         article_no = item.get("article_no") or ""
-        product_id = product_ids.get(article_no, 0)
+        product_id, product_ref = product_ids.get(article_no, (0, ""))
+
         kolli = parse_decimal_safe(item.get("kolli"), "pdf_import_items.kolli")
         quantity = parse_decimal_safe(item.get("quantity"), "pdf_import_items.quantity")
-        unit_price = parse_decimal_safe(item.get("unit_price"), "pdf_import_items.unit_price")
+        # inhalt = pieces per case (VPE); used to convert case price → piece price
+        inhalt = parse_decimal_safe(item.get("inhalt"), "pdf_import_items.inhalt")
+        unit_price_raw = parse_decimal_safe(item.get("unit_price"), "pdf_import_items.unit_price")
+
+        # qte_unit_prd = content per ordered unit (pieces/case for KOL, 1 for ST/KG)
+        qte_unit_prd = inhalt if inhalt > 0 else Decimal("1")
+
+        # AKEAD expects piece price; if invoice gives case price, divide by inhalt
+        if inhalt > 1:
+            piece_price = (unit_price_raw / inhalt).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        else:
+            piece_price = unit_price_raw
+
         # Austrian suppliers: use the staged tax rate from the PDF.
         # Foreign suppliers: no Austrian VAT applies, always 0.
         staged_tax = parse_decimal_safe(item.get("tax_rate"), "pdf_import_items.tax_rate")
         tax_rate = staged_tax if is_austrian_supplier else Decimal("0")
+
         line_total = parse_decimal_safe(item.get("line_total"), "pdf_import_items.line_total")
+        # Fallback: calculate total when PDF did not provide it
+        if line_total == 0 and quantity > 0 and unit_price_raw > 0:
+            line_total = (quantity * unit_price_raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # AKEAD ref code: matched product's own ref, or sequential IMP placeholder
+        if not product_ref:
+            product_ref = f"IMP{idx:06d}"
+
         row = {key: value for key, value in template.items() if key != "id"}
         # Regenerate any UUID columns copied from template to avoid UNIQUE constraint violations
         for key in list(row.keys()):
@@ -459,12 +482,12 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
                 "colis": kolli,
                 "qte": quantity,
                 "unite": item["unit"],
-                "uprice_wot_curr_trf": unit_price,
+                "uprice_wot_curr_trf": piece_price,
                 "currency_trf": "EUR",
                 "trf_exch_rate": Decimal("1"),
                 "trf_exch_rate_div": Decimal("1"),
-                "prix_u_ht": unit_price,
-                "qte_unit_prd": quantity,
+                "prix_u_ht": piece_price,
+                "qte_unit_prd": qte_unit_prd,
                 "taux_tva": tax_rate,
                 "prix_revt": Decimal("0"),
                 "cost_price_curr": Decimal("0"),
@@ -476,6 +499,9 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
                 "dat_upd": now.replace(microsecond=0),
             }
         )
+        # Write AKEAD product ref code if the column exists in invoices_details
+        if "ref_prd" in row:
+            row["ref_prd"] = product_ref
         rows.append(row)
     return rows
 
