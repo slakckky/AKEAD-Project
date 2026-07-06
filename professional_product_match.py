@@ -939,44 +939,34 @@ def execute_plan(connection, plan: dict) -> None:
                 planned_ref = evaluation["planned_product"].get("ref_prd", "")
                 planned_sy_uk = evaluation["planned_product"].get("sy_uk")
                 article_no = str(item.get("article_no") or "").strip()
-                existing = fetch_one(
-                    cursor,
-                    """
-                    SELECT id FROM produits
-                    WHERE ref_prd = %s
-                       OR (sy_uk = %s AND %s IS NOT NULL)
-                       OR (lib_tech LIKE %s AND %s <> '')
-                    LIMIT 1
-                    """,
-                    (planned_ref, planned_sy_uk, planned_sy_uk,
-                     f"Lief-Art-Nr: {article_no}%", article_no),
+                prod_row = evaluation["planned_product"]
+                columns = list(prod_row.keys())
+                col_sql = ", ".join(f"`{c}`" for c in columns)
+                placeholders = ", ".join(["%s"] * len(columns))
+                # INSERT IGNORE: MySQL silently skips duplicates, no exception raised
+                cursor.execute(
+                    f"INSERT IGNORE INTO `produits` ({col_sql}) VALUES ({placeholders})",
+                    tuple(prod_row[c] for c in columns),
                 )
-                if existing:
-                    product_id = int(existing["id"])
+                if cursor.lastrowid:
+                    product_id = int(cursor.lastrowid)
+                    barcode = evaluation["planned_barcode"]
+                    if barcode:
+                        existing_barcode = fetch_one(cursor, "SELECT id FROM codebarres WHERE cod_barr = %s LIMIT 1", (barcode,))
+                        if not existing_barcode:
+                            insert_row(cursor, "codebarres", build_barcode_row(product_id, barcode, evaluation["unit"]))
                 else:
-                    try:
-                        product_id = insert_row(cursor, "produits", evaluation["planned_product"])
-                    except Exception as exc:
-                        if "1062" in str(exc) or "duplicate" in str(exc).lower():
-                            # Race or leftover record: fetch whichever key conflicted
-                            fallback = fetch_one(
-                                cursor,
-                                "SELECT id FROM produits WHERE ref_prd = %s OR sy_uk = %s LIMIT 1",
-                                (planned_ref, planned_sy_uk),
-                            )
-                            if fallback:
-                                product_id = int(fallback["id"])
-                                print(f"  [duplicate suppressed — reusing product id={product_id}]")
-                            else:
-                                raise
-                        else:
-                            raise
+                    # INSERT was silently ignored — find the existing record
+                    existing = fetch_one(
+                        cursor,
+                        "SELECT id FROM produits WHERE ref_prd = %s OR sy_uk = %s LIMIT 1",
+                        (planned_ref, planned_sy_uk),
+                    )
+                    if existing:
+                        product_id = int(existing["id"])
+                        print(f"  [reused existing product ref={planned_ref}]")
                     else:
-                        barcode = evaluation["planned_barcode"]
-                        if barcode:
-                            existing_barcode = fetch_one(cursor, "SELECT id FROM codebarres WHERE cod_barr = %s LIMIT 1", (barcode,))
-                            if not existing_barcode:
-                                insert_row(cursor, "codebarres", build_barcode_row(product_id, barcode, evaluation["unit"]))
+                        product_id = 0
             else:
                 continue
 
