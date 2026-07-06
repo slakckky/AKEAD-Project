@@ -284,38 +284,34 @@ def _fuzzy_supplier_table(cursor, table: str, supplier: str) -> tuple[int | None
 
 
 def _auto_create_supplier(cursor, supplier: str) -> int:
+    """Create the supplier in the clients table (AKEAD supplier master)."""
     code = re.sub(r"[^A-Za-z0-9]", "", supplier)[:10].upper() or "IMP"
-    for table in ("clients", "vendors"):
-        try:
-            cursor.execute(f"INSERT INTO `{table}` (code, nom) VALUES (%s, %s)", (code, supplier[:100]))
-            new_id = int(cursor.lastrowid)
-            print(f"Auto-created supplier '{supplier}' in {table} (id={new_id})")
-            return new_id
-        except Exception as exc:
-            print(f"Could not auto-create in {table}: {exc}")
-    raise ValueError(f"Vendor '{supplier}' not found and auto-create failed.")
+    cursor.execute("INSERT INTO clients (code, nom) VALUES (%s, %s)", (code, supplier[:100]))
+    new_id = int(cursor.lastrowid)
+    print(f"Auto-created supplier '{supplier}' in clients (id={new_id})")
+    return new_id
 
 
 def resolve_vendor_id(cursor, supplier_name: str) -> int:
+    """Resolve supplier name to clients.id (used as invoices.id_clt).
+
+    README: suppliers live in `clients`; the invoice counterparty is id_clt.
+    Resolve against clients only so the returned id is always a valid clients.id.
+    """
     supplier = (supplier_name or "").strip()
     if not supplier:
-        raise ValueError("id_vendor cannot be set: supplier_name missing from staging document.")
+        raise ValueError("id_clt cannot be set: supplier_name missing from staging document.")
 
-    # Exact / LIKE match — try clients first (AKEAD may store suppliers there), then vendors
-    for table in ("clients", "vendors"):
-        found = _search_supplier_table(cursor, table, supplier)
-        if found is not None:
-            return found
+    found = _search_supplier_table(cursor, "clients", supplier)
+    if found is not None:
+        return found
 
-    # Fuzzy match
-    for table in ("clients", "vendors"):
-        best_id, best_score = _fuzzy_supplier_table(cursor, table, supplier)
-        if best_id is not None and best_score >= 0.55:
-            print(f"Vendor '{supplier}' not found exactly — using closest match in {table} (score {best_score:.0%})")
-            return best_id
+    best_id, best_score = _fuzzy_supplier_table(cursor, "clients", supplier)
+    if best_id is not None and best_score >= 0.7:
+        print(f"Supplier '{supplier}' not found exactly — using closest client (score {best_score:.0%})")
+        return best_id
 
-    # Auto-create
-    print(f"Vendor '{supplier}' not found — creating automatically.")
+    print(f"Supplier '{supplier}' not found in clients — creating automatically.")
     return _auto_create_supplier(cursor, supplier)
 
 
@@ -427,12 +423,13 @@ def build_invoice_row(template: dict, document: dict, next_sy_uk: int, vendor_id
         {
             "id_org": 1,
             "id_dept": 1,
-            "id_clt": 1,
+            # id_clt = the supplier's clients.id — AKEAD shows the counterparty
+            # from id_clt. Hardcoding 1 made every invoice show client #1.
+            "id_clt": vendor_id if vendor_id > 0 else 1,
             "no_doc": document["document_no"],
             "no_doc_cus_sup": document["document_no"],
             "dat_doc": document["document_date"],
             "time_doc": now.time().replace(microsecond=0),
-            "id_vendor": vendor_id,
             "typ_sal_pur": -1,
             "id_stck": 1,
             "stk_typ_doc": "L",
@@ -573,9 +570,9 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
         # README 5.4: look up id_taxclass from the tax table by rate, don't guess.
         taxclass = resolve_taxclass(tax_rate, tax_classes)
 
-        # AKEAD ref code: matched product's own ref, or sequential IMP placeholder
+        # AKEAD ref code: matched product's own ref (numeric placeholder if none)
         if not product_ref:
-            product_ref = f"IMP{idx:06d}"
+            product_ref = str(idx)
 
         row = {key: value for key, value in template.items() if key != "id"}
         # Regenerate any UUID columns copied from template to avoid UNIQUE constraint violations

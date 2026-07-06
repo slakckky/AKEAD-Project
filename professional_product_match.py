@@ -616,7 +616,7 @@ def build_product_row(template: dict, item: dict, family: dict, unit: str, sy_uk
             row[key] = uuid.uuid4().hex
     row.update(
         {
-            "ref_prd": f"IMP{sy_uk:06d}",
+            "ref_prd": str(sy_uk)[:20],
             "typ_prd": 1,
             "lib_prd": name,
             "lib_prd_rtf": name,
