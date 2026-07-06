@@ -439,7 +439,7 @@ def detect_supplier(lines: list[str], text: str) -> str:
     4. Fall back to first non-ignored line with letters if no suffix found.
     """
     company_suffix = re.compile(
-        r"\b(GmbH|e\.?K\.?|KG|AG|Ltd|Inc|Corp|OHG|GbR|S\.A\.)\b", re.IGNORECASE
+        r"\b(GmbH|e\.?\s?K\.?|KG|AG|Ltd|Inc|Corp|OHG|GbR|S\.A\.)\b", re.IGNORECASE
     )
     supplier_anchor = re.compile(
         r"\b(ust.?id|uid.?nr|steuernr|steuer.?nr|iban|bic|bankverbindung|hrb|amtsgericht|inhaber)\b",
@@ -484,27 +484,36 @@ def detect_supplier(lines: list[str], text: str) -> str:
 
     if candidates:
         if len(candidates) == 1:
-            return _trim_to_company_name(candidates[0][1])
+            result = _trim_to_company_name(candidates[0][1])
+            logging.debug("detect_supplier: single candidate -> %s", result)
+            return result
 
         # Score: +points near supplier anchors, -points near customer anchors
         best_name = ""
         best_score = -999
         for idx, name in candidates:
             score = proximity(idx, supplier_anchors) - proximity(idx, customer_anchors) * 2
-            # Prefer candidates that appear EARLIER (letterhead position) as tiebreaker
             score -= idx * 0.01
+            logging.debug("detect_supplier candidate line %d: %r score=%.2f", idx, name, score)
             if score > best_score:
                 best_score = score
                 best_name = name
-        return _trim_to_company_name(best_name)
+        result = _trim_to_company_name(best_name)
+        logging.debug("detect_supplier: best candidate -> %r (score=%.2f)", result, best_score)
+        print(f"Supplier candidates found: {[n for _, n in candidates]}")
+        print(f"Supplier detected: {result}")
+        return result
 
     # Fallback: first non-ignored line with letters in first 20 lines
+    print("Supplier detection: no company-suffix found, using first text line fallback")
     for line in lines[:20]:
         clean = " ".join(line.split()).strip(":- ")
         if len(clean) < 3 or ignore.search(clean):
             continue
         if re.search(r"[A-Za-zÄÖÜäöüß]", clean):
-            return _trim_to_company_name(clean)
+            result = _trim_to_company_name(clean)
+            print(f"Supplier fallback -> {result!r}")
+            return result
 
     return ""
 
