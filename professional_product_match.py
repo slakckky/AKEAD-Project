@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import csv
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
@@ -607,9 +608,9 @@ def evaluate_item(item: dict, products: list[dict], families: list[dict], units:
                 fp, fs = best_fuzzy_match(dict(item, article_name=name), products)
                 if fp and fs >= AUTO_MATCH_THRESHOLD:
                     product = fp
-                    match_type = "OFF barcode→fuzzy"
+                    match_type = "OFF barcode->fuzzy"
                     score = fs
-                    notes.append(f"OFF: {bc} → {name}")
+                    notes.append(f"OFF: {bc} -> {name}")
                     break
             if product:
                 break
@@ -989,6 +990,11 @@ def execute_plan(connection, plan: dict) -> None:
 
 
 def main() -> int:
+    # Force UTF-8 output on Windows (avoids charmap errors with non-ASCII chars)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     try:
         env_file = find_env_file()
         config = load_env(env_file)

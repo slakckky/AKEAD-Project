@@ -638,6 +638,10 @@ def execute_import(connection, plan: dict) -> int:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     try:
         env_file = find_env_file()
         config = load_env(env_file)

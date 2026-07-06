@@ -1346,6 +1346,10 @@ def preview_mode(config: dict[str, str], pdfs: list[Path]) -> int:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     setup_logging()
     PDF_INPUT_DIR.mkdir(exist_ok=True)
     PDF_IMPORTED_DIR.mkdir(exist_ok=True)

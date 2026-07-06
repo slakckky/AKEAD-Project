@@ -426,6 +426,10 @@ def apply_matches(connection, unresolved: list[dict], result: MatchResult) -> in
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="AI destekli urun eslestirme")
     parser.add_argument(
         "--apply", action="store_true",
