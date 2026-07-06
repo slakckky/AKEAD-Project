@@ -508,6 +508,16 @@ def build_detail_rows(template: dict, items: list[dict], product_ids: dict[str, 
         # Write only if column exists in invoices_details (safe for any schema)
         if "ref_prd" in row:
             row["ref_prd"] = product_ref
+
+        # Cover alternative column names AKEAD may use for colis/inhalt
+        colis_val = kolli if kolli > 0 else quantity
+        inhalt_val = qte_unit_prd if qte_unit_prd > 0 else Decimal("1")
+        for col in row:
+            cl = col.lower()
+            if cl in ("nbre_colis", "nb_colis", "qte_colis", "nb_col"):
+                row[col] = colis_val
+            elif cl in ("inhalt", "contenu_prd", "qte_contenu", "nb_contenu", "nb_prd_colis"):
+                row[col] = inhalt_val
         rows.append(row)
     return rows
 
@@ -604,6 +614,9 @@ def print_dry_run(plan: dict) -> None:
     print(f"Staging-Dokument: {plan['document']['id']} / {plan['document']['document_no']}")
     print(f"sy_uk geplant: {plan['next_sy_uk']}")
     print(f"Positionen geplant: {len(plan['detail_rows'])}")
+    if plan["detail_rows"]:
+        colis_related = [k for k in plan["detail_rows"][0] if "colis" in k.lower() or "inhalt" in k.lower() or "contenu" in k.lower()]
+        print(f"Kolli/Inhalt columns in invoices_details: {colis_related}")
     print()
     print(render_insert("invoices", plan["invoice_row"]))
     print()
