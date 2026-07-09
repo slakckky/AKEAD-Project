@@ -804,12 +804,14 @@ def print_dry_run(plan: dict) -> None:
     print(f"Staging-Dokument: {plan['document']['id']} / {plan['document']['document_no']}")
     print(f"sy_uk geplant: {plan['next_sy_uk']}")
     print(f"Positionen geplant: {len(plan['detail_rows'])}")
-    print(f"Detail rows count: {len(plan['detail_rows'])}")
-    if plan["detail_rows"]:
-        first = plan["detail_rows"][0]
-        colis_related = [k for k in first if "colis" in k.lower() or "inhalt" in k.lower() or "contenu" in k.lower()]
-        print(f"Kolli/Inhalt columns in invoices_details: {colis_related}")
-        print(f"  colis={first.get('colis')} qte={first.get('qte')} qte_unit_prd={first.get('qte_unit_prd')}")
+    print()
+    # Per-line diagnostic: flag rows with an empty supplier code (ref_cus_sup)
+    print("Pos | ref_cus_sup | id_prd | Artikel")
+    print("----+-------------+--------+--------")
+    for row in plan["detail_rows"]:
+        ref = str(row.get("ref_cus_sup") or "")
+        flag = "  <-- EMPTY REF" if not ref.strip() else ""
+        print(f"{str(row.get('no_lig','')):>3} | {ref:<11} | {str(row.get('id_prd','')):>6} | {str(row.get('lib',''))[:40]}{flag}")
     print()
     print(render_insert("invoices", plan["invoice_row"]))
     print()
